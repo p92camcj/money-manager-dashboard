@@ -1,0 +1,1 @@
+Realbyte.lang='es';Realbyte.moneyFormat='0,000.00';Realbyte.uri = 'moneyBook';

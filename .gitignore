@@ -1,0 +1,15 @@
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Configuración local sensible
+.env
+
+# Datos de ejemplo/pruebas locales (pueden contener información financiera real)
+samples/

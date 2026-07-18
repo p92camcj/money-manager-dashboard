@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Money Manager Premium - Dashboard</title>
+    <link rel="stylesheet" href="style.css?v=8">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+</head>
+<body>
+    <div class="glass-container">
+        <!-- Sidebar -->
+        <aside class="sidebar" style="overflow-y:auto; max-height:100vh;">
+            <div class="logo">
+                <span class="logo-icon">💰</span>
+                <h2>Money Manager</h2>
+            </div>
+            <nav>
+                <ul>
+                    <li class="active" onclick="switchTab('dashboard')"><span>📊</span> Dashboard</li>
+                    <li onclick="switchTab('transactions')"><span>📝</span> Transacciones</li>
+                    <li onclick="switchTab('budgets')"><span>📅</span> Presupuestos</li>
+                    <li onclick="switchTab('conciliation')"><span>🏦</span> Conciliación</li>
+                    <li onclick="switchTab('settings')"><span>⚙️</span> Ajustes</li>
+                </ul>
+            </nav>
+            <div class="account-summary" id="accountList">
+                <!-- Se llenará dinámicamente -->
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="content">
+            <header>
+                <div class="header-left">
+                    <h1 id="tabTitle">Dashboard</h1>
+                    <div class="period-controls">
+                        <span id="periodLabel" class="badge-period">Calculando periodo...</span>
+                        <select id="periodSelector" onchange="handlePeriodChange()">
+                            <option value="current_economic">Mes Económico Actual (28)</option>
+                            <option value="previous_economic">Mes Económico Anterior (28)</option>
+                            <option value="current_month">Mes Natural Actual</option>
+                            <option value="custom">Rango Personalizado...</option>
+                        </select>
+                    </div>
+                    <span id="connectionStatus" class="status offline">Conectando...</span>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-primary" onclick="openAddModal()">+ Nuevo</button>
+                    <button class="btn-refresh" onclick="loadData()">🔄</button>
+                </div>
+            </header>
+
+            <section id="dashboardTab" class="tab-content active">
+                <div class="stats-grid">
+                    <div class="card glass">
+                        <h3>Ingresos</h3>
+                        <p class="amount income-text" id="totalIncome">0.00€</p>
+                    </div>
+                    <div class="card glass">
+                        <h3>Gastos</h3>
+                        <p class="amount outcome-text" id="totalOutcome">0.00€</p>
+                    </div>
+                </div>
+                <div class="charts-row">
+                    <div class="card glass chart-container">
+                        <h3>Distribución de Activos</h3>
+                        <canvas id="assetsChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <section id="transactionsTab" class="tab-content">
+                <div class="card glass" style="margin-bottom:20px;">
+                    <h3>Filtros Avanzados</h3>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                        <input type="text" id="filterSearch" placeholder="Buscar texto o #tags..." onkeyup="applyAdvancedFiltersUI()">
+                        <input type="number" id="filterMin" placeholder="Importe Mín (€)" onkeyup="applyAdvancedFiltersUI()">
+                        <input type="number" id="filterMax" placeholder="Importe Máx (€)" onkeyup="applyAdvancedFiltersUI()">
+                        <button class="btn-secondary btn-sm" onclick="resetFilterUI()">Limpiar</button>
+                    </div>
+                </div>
+                <div class="card glass">
+                    <table class="data-table" id="transactionsTable">
+                        <thead>
+                            <tr>
+                                <th onclick="sortTable(0)" style="cursor:pointer">Fecha/Hora ↕</th>
+                                <th onclick="sortTable(1)" style="cursor:pointer">Categoría ↕</th>
+                                <th onclick="sortTable(2)" style="cursor:pointer">Subcategoría ↕</th>
+                                <th onclick="sortTable(3)" style="cursor:pointer">Concepto ↕</th>
+                                <th onclick="sortTable(4)" style="cursor:pointer">Cuenta Origen ↕</th>
+                                <th onclick="sortTable(5)" style="cursor:pointer; text-align:right">Importe ↕</th>
+                                <th style="text-align:center; width:60px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="transBody">
+                            <!-- Se llenará con renderTransactions() -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="budgetsTab" class="tab-content">
+                <div class="card glass">
+                    <div class="table-header">
+                        <h2>Presupuestos Jerárquicos</h2>
+                        <button class="btn-secondary btn-sm" onclick="expandAllBudgets()">Expandir Todo</button>
+                    </div>
+                    <div id="budgetTree" class="budget-tree">
+                        <!-- Estructura de árbol generada por JS -->
+                    </div>
+                </div>
+            </section>
+
+            <section id="conciliationTab" class="tab-content">
+                <div class="conciliation-header">
+                    <h2>Conciliación Semisupervisada</h2>
+                    <p>Sube tu Excel bancario para comparar movimientos.</p>
+                    <input type="file" id="excelInput" accept=".xls,.xlsx" style="display:none" onchange="handleFileUpload()">
+                    <button class="btn-secondary" onclick="document.getElementById('excelInput').click()">Subir Excel</button>
+                </div>
+                <div id="proposalsList" class="proposals-grid">
+                    <!-- Propuestas aquí -->
+                </div>
+            </section>
+
+            <section id="settingsTab" class="tab-content">
+                <div class="card glass">
+                    <h2>Ajustes</h2>
+                    <div class="form-group">
+                        <label>IP del Móvil</label>
+                        <input type="text" value="192.168.5.248:8888" id="phoneIpInput">
+                        <button class="btn-primary">Guardar IP</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <footer class="app-footer">Money Manager Dashboard <span id="appVersion">v...</span></footer>
+
+    <div id="editModal" class="modal glass">
+        <div class="modal-content card glass">
+            <h2>Gestión de Transacción</h2>
+            <form id="editForm">
+                <input type="hidden" id="editId">
+                <div style="display:flex; gap:10px;">
+                    <div style="flex:1">
+                        <label>Fecha</label>
+                        <input type="date" id="editDate" required>
+                    </div>
+                    <div style="flex:1">
+                        <label>Hora</label>
+                        <input type="time" id="editTime" value="12:00" required>
+                    </div>
+                </div>
+                
+                <label>Tipo</label>
+                <select id="editType" onchange="updateModalCategories()">
+                    <option value="Gasto">Gasto</option>
+                    <option value="Ingreso">Ingreso</option>
+                    <option value="Transferencia">Transferencia</option>
+                </select>
+
+                <div style="display:flex; gap:10px;">
+                    <div style="flex:1" id="sourceAccountContainer">
+                        <label id="accountLabel1">Cuenta de Origen</label>
+                        <select id="editAccount"></select>
+                    </div>
+                    <div style="flex:1; display:none;" id="targetAccountContainer">
+                        <label>Cuenta de Destino</label>
+                        <select id="editTargetAccount"></select>
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:10px;">
+                    <div style="flex:1">
+                        <label>Categoría</label>
+                        <select id="editCategory" onchange="updateModalSubCategories()"></select>
+                    </div>
+                    <div style="flex:1" id="subCatContainer">
+                        <label>Subcategoría</label>
+                        <select id="editSubCategory"></select>
+                    </div>
+                </div>
+                
+                <label>Concepto (Descripción Corta)</label>
+                <input type="text" id="editContent" required>
+                
+                <label>Importe (€)</label>
+                <input type="number" step="0.01" id="editAmount" required>
+
+                <label>Descripción Detallada (Opcional)</label>
+                <textarea id="editDetailContent" rows="3" style="width:100%; padding: 10px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 10px; color: white; margin-top: 5px; font-family: inherit; resize: vertical;"></textarea>
+                
+                <div class="modal-buttons" style="margin-top:20px;">
+                    <button type="button" class="btn-secondary" onclick="closeModal()">Cancelar</button>
+                    <button type="button" class="btn-primary" onclick="submitTransaction()">Confirmar y Enviar al Móvil</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="js/analytics.js?v=8"></script>
+    <script src="script.js?v=8"></script>
+</body>
+</html>
