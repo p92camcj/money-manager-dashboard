@@ -51,6 +51,10 @@ CORS(app)  # Permite acceso desde el frontend en desarrollo
 # Configuración persistente
 CONFIG_FILE = "config.json"
 VERSION_FILE = "VERSION"
+# config.json no está versionado (cada usuario tiene su propia IP de LAN, ver
+# config.example.json) — este valor de ejemplo es el único que vive en el código, y se usa
+# tanto como fallback en memoria como para crear config.json en el primer arranque.
+DEFAULT_CONFIG = {"phone_ip": "192.168.1.100:8888", "phone_port": "8888"}
 
 def get_app_version():
     try:
@@ -66,7 +70,11 @@ def get_config():
                 return json.load(f)
         except:
             pass
-    return {"phone_ip": "192.168.5.248:8888", "phone_port": "8888"}
+    # Primer arranque (o config.json corrupto/ausente): se crea con el valor de ejemplo para
+    # que el usuario lo edite desde la pestaña Ajustes (POST /api/config) sin tener que tocar
+    # el fichero a mano.
+    save_config(DEFAULT_CONFIG)
+    return DEFAULT_CONFIG
 
 def save_config(config):
     with open(CONFIG_FILE, 'w') as f:
@@ -74,8 +82,8 @@ def save_config(config):
 
 def get_phone_url():
     c = get_config()
-    ip = str(c.get("phone_ip", "192.168.5.248:8888"))
-    port = str(c.get("phone_port", "8888"))
+    ip = str(c.get("phone_ip", DEFAULT_CONFIG["phone_ip"]))
+    port = str(c.get("phone_port", DEFAULT_CONFIG["phone_port"]))
     # Limpieza de IP por si el usuario metió el puerto en el campo IP
     if ":" in ip:
         parts = ip.split(":")

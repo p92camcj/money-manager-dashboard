@@ -8,8 +8,9 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Configuración local sensible
+# Configuración local sensible (IP/puerto del móvil de cada usuario — ver config.example.json)
 .env
+config.json
 
 # Datos de ejemplo/pruebas locales (pueden contener información financiera real)
 samples/
