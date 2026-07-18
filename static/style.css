@@ -14,10 +14,12 @@
 
 .app-footer {
     text-align: center;
-    padding: 10px;
+    padding: 8px 10px 0;
+    margin-top: 8px;
     font-size: 0.75rem;
     color: var(--text-muted);
     letter-spacing: 0.02em;
+    flex-shrink: 0;
 }
 
 body {
@@ -26,6 +28,7 @@ body {
     color: var(--text-main);
     min-height: 100vh;
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
     overflow-x: hidden;

@@ -2,6 +2,13 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.1.1.2 - 2026-07-18
+
+Corrige la posición del footer con la versión.
+
+- `body` pasa a `flex-direction: column`, así `.app-footer` queda apilado y centrado debajo del
+  panel principal en vez de aparecer como un elemento lateral roto por el layout en fila.
+
 ## 0.1.0.1 - 2026-07-18
 
 Formalización inicial del proyecto.
