@@ -6,6 +6,7 @@ let currentTab = 'dashboard';
 let chartInstance = null;
 let currentFilter = { category: null, subCategory: null, searchStr: null, minAmount: null, maxAmount: null, tags: null };
 let currentPeriod = { startDate: '', endDate: '', label: '' };
+let lastProposals = []; // última tanda de propuestas de conciliación, para que confirmMatch() encuentre fecha/importe/descripción por source_id
 
 // --- UTILIDADES DE CACHÉ ---
 function setCache(key, data) {
@@ -740,26 +741,29 @@ async function handleFileUpload() {
 
         const res = await fetch('/api/analyze-excel', { method: 'POST', body: formData });
         const proposals = await res.json();
-        
+
         list.innerHTML = '';
         if (!proposals || proposals.error) {
             list.innerHTML = `<p style="color:#f87171">Error al analizar el Excel: ${proposals ? proposals.error : 'Desconocido'}</p>`;
             fileInput.value = ''; // Limpiar input para permitir reintento
             return;
         }
-        
+
         // Ordenar del más reciente (arriba) al más antiguo (abajo)
         proposals.sort((a,b) => new Date(b.date) - new Date(a.date));
-        
+        lastProposals = proposals; // para que confirmMatch() pueda recuperar fecha/importe/descripción por source_id
+
         proposals.forEach(p => {
             const card = document.createElement('div');
             let isDuplicate = p.status !== 'new';
-            let badgeColor = isDuplicate ? (p.status === 'exact_match' ? 'badge-danger' : 'badge-warning') : 'badge-success';
-            let badgeText = p.status === 'exact_match' ? 'Duplicado Exacto' : 
-                           (p.status === 'new' ? 'Nuevo Movimiento' : 'Posible Coincidencia');
-            
+            let badgeColor = p.status === 'reconciled' ? 'badge-info' :
+                             (isDuplicate ? (p.status === 'exact_match' ? 'badge-danger' : 'badge-warning') : 'badge-success');
+            let badgeText = p.status === 'reconciled' ? 'Ya Conciliado' :
+                           (p.status === 'exact_match' ? 'Duplicado Exacto' :
+                           (p.status === 'new' ? 'Nuevo Movimiento' : 'Posible Coincidencia'));
+
             let candidatesHtml = '';
-            if (p.status === 'exact_match') {
+            if (p.status === 'exact_match' || p.status === 'reconciled') {
                 candidatesHtml = `<div style="margin-top:10px;"><button class="btn-secondary btn-sm" onclick="showTransaction('${p.suggested_mm_ref}')">👁 Ver Registro Asociado</button></div>`;
             } else if (p.status === 'suggested_match' || p.status === 'probable_match') {
                 candidatesHtml = `<div style="margin-top:10px;"><strong>Posibles Asociados en MoneyManager:</strong><ul style="list-style:none; padding-left:0; margin-top:5px;">`;
@@ -832,11 +836,39 @@ function showTransaction(id) {
     }
 }
 
-function confirmMatch(sourceId, candId) {
-    alert("Match confirmado. Esta fila del Excel queda enlazada localmente al ID interno: " + candId);
-    // Visualmente ocultar
-    event.target.closest('.proposal-card').style.opacity = '0.4';
-    event.target.closest('ul').style.display = 'none';
+async function confirmMatch(sourceId, candId) {
+    // Capturar referencias antes del await: el objeto global `event` no sobrevive de forma fiable tras un await
+    const card = event.target.closest('.proposal-card');
+    const list = event.target.closest('ul');
+
+    const proposal = lastProposals.find(p => p.source_id === sourceId);
+    if (!proposal) {
+        alert("No se encontró la propuesta original (¿recargaste la página desde el último análisis?). Vuelve a subir el Excel.");
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/reconciliations/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                date: proposal.date,
+                amount: proposal.amount,
+                description: proposal.description,
+                mm_id: candId
+            })
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            alert("Error al confirmar el match: " + (data.error || resp.status));
+            return;
+        }
+        // Match enlazado localmente (NUNCA se escribe en el móvil). Ocultar visualmente.
+        if (card) card.style.opacity = '0.4';
+        if (list) list.style.display = 'none';
+    } catch (e) {
+        alert("Error crítico confirmando match: " + e.message);
+    }
 }
 
 function updateUI() {

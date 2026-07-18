@@ -13,3 +13,6 @@ __pycache__/
 
 # Datos de ejemplo/pruebas locales (pueden contener información financiera real)
 samples/
+
+# Historial personal de conciliación (por usuario, no es código del proyecto)
+data/

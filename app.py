@@ -24,6 +24,7 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(line_buffering=True)
 
 from backend.reconciliation import match_bank_transactions
+from backend.reconciliation_store import make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation
 from backend.budget_engine import BudgetEngine
 
 app = Flask(__name__, static_folder='static')
@@ -272,12 +273,47 @@ def analyze_excel():
             window_days=window_days
         )
 
+        # Sobreescribir con conciliaciones ya confirmadas en sesiones anteriores: el usuario ya dio
+        # la respuesta correcta, no hace falta volver a preguntarle sobre la misma línea.
+        reconciled_count = 0
+        reconciliations = load_reconciliation_store()
+        for p in proposals:
+            key = make_key(p['date'], p['amount'], p['description'])
+            confirmation = get_confirmation(key, store=reconciliations)
+            if confirmation:
+                p['status'] = 'reconciled'
+                p['confidence'] = 100
+                p['suggested_mm_ref'] = confirmation['mm_id']
+                p['candidates'] = []
+                reconciled_count += 1
+
         status_counts = Counter(p['status'] for p in proposals)
-        print(f"[analyze-excel] Resultado de conciliación ({len(proposals)} filas): {dict(status_counts)}")
+        print(f"[analyze-excel] Resultado de conciliación ({len(proposals)} filas, {reconciled_count} ya conciliadas antes): {dict(status_counts)}")
 
         return jsonify(clean_nans(proposals))
     except Exception as e:
         print(f"[analyze-excel] ERROR inesperado: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/reconciliations/confirm', methods=['POST'])
+def confirm_reconciliation_endpoint():
+    """Vincula localmente una línea del Excel del banco con una transacción ya existente en
+    Money Manager. NUNCA escribe en el móvil — la transacción ya existe allí, esto solo evita
+    volver a presentar la misma ambigüedad si se recarga un Excel que se solape en fechas."""
+    data = request.json or {}
+    date_str = data.get('date')
+    amount = data.get('amount')
+    description = data.get('description')
+    mm_id = data.get('mm_id')
+
+    if not date_str or amount is None or not description or not mm_id:
+        return jsonify({"error": "Faltan campos: date, amount, description, mm_id"}), 400
+
+    try:
+        key = confirm_reconciliation(date_str, amount, description, mm_id)
+        print(f"[reconciliations] Confirmado {date_str} | {amount} | {description[:40]!r} -> mm_id={mm_id}")
+        return jsonify({"status": "success", "key": key})
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/budget-hierarchy', methods=['GET'])

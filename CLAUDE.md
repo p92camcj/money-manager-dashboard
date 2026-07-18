@@ -205,6 +205,44 @@ Si en el futuro se añade cualquier tipo de "auto-aplicar" (aunque sea solo para
 un único candidato y confidence 100), debe ser explícito, opcional, y nunca el comportamiento por
 defecto.
 
+### Persistencia de conciliaciones confirmadas
+
+Confirmar un match (botón "Confirmar Este" sobre un candidato de `suggested_match`/`probable_match`)
+**no escribe nada en el móvil** — la transacción ya existe allí; solo vincula visualmente una línea
+del Excel del banco con una transacción ya existente en Money Manager. Lo que sí persiste es esa
+decisión, localmente, para no volver a presentar la misma ambigüedad si se recarga un Excel que se
+solape en fechas con uno ya revisado.
+
+- **Dónde vive**: `data/reconciliations.json`. Fichero plano, igual de sencillo que `config.json`
+  (sin ORM ni SQLite: el volumen de datos de un usuario doméstico no lo justifica). `data/` está en
+  `.gitignore` — es historial personal de conciliación, no código del proyecto, igual que `samples/`.
+- **Clave estable**: no hay ID nativo en el Excel del banco, así que la clave es
+  `sha256(f"{fecha_iso}|{importe:.2f}|{descripcion_normalizada}")`, donde `descripcion_normalizada`
+  es el texto en minúsculas con espacios colapsados (`backend/reconciliation_store.py:make_key()`).
+  Esta misma función se usa tanto al confirmar como al re-analizar un Excel, para que la clave sea
+  idéntica en ambos casos.
+  - **Limitación conocida y aceptada**: dos movimientos bancarios genuinamente distintos con la
+    misma fecha, importe y descripción exacta (p. ej. dos compras idénticas el mismo día en el
+    mismo comercio) comparten clave y se tratan como el mismo movimiento. Es una limitación
+    inherente a no tener ID nativo en el extracto bancario, no un bug — si se vuelve un problema
+    real, la solución sería añadir un índice de ocurrencia dentro del mismo día a la clave.
+- **Qué se guarda por clave**: `mm_id` (id real/UUID de la transacción en Money Manager con la que
+  se vinculó), `confirmed_at` (ISO 8601 UTC), y `status` (por ahora solo `"confirmed"`; el campo ya
+  admite añadir `"dismissed"` en el futuro sin cambiar el formato).
+- **Al analizar un Excel**: `POST /api/analyze-excel` calcula las propuestas con
+  `match_bank_transactions()` como siempre, y **después** sobreescribe el `status` a `"reconciled"`
+  para cualquier propuesta cuya clave ya exista en el almacén, usando el `mm_id` guardado como
+  `suggested_mm_ref` — ignora lo que el matching heurístico hubiera calculado, porque el usuario ya
+  dio la respuesta correcta antes.
+- **Estado visual**: `"reconciled"` es un estado nuevo en el frontend, distinto de "Nuevo
+  Movimiento" (`new`) y "Posible Coincidencia" (`suggested_match`/`probable_match`) — badge propio
+  ("Ya Conciliado") y botón "Ver Registro Asociado" (igual que `exact_match`), sin acciones de
+  confirmación adicionales.
+- **Endpoint**: `POST /api/reconciliations/confirm` (nuevo — antes `confirmMatch()` en el frontend
+  era solo un `alert()` local sin llamada al backend). Recibe `date`, `amount`, `description`
+  (los mismos campos de la propuesta, para recalcular la clave) y `mm_id` (el candidato elegido);
+  escribe la entrada en `data/reconciliations.json`.
+
 ## Versionado
 
 Formato `X.Y.Z.W`, constante `APP_VERSION` expuesta en `app.py` (o fichero `VERSION` en la raíz,

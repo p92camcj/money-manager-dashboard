@@ -2,6 +2,27 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.2.0.6 - 2026-07-18
+
+Nueva funcionalidad: persistencia local de conciliaciones confirmadas.
+
+- Confirmar un match ("Confirmar Este" sobre un candidato ambiguo) ahora escribe en
+  `data/reconciliations.json` (local, gitignorado, fuera del proyecto versionado) — sigue sin
+  escribir nada en Money Manager, solo recuerda la decisión del usuario.
+- `backend/reconciliation_store.py`: clave estable por hash de fecha+importe+descripción
+  normalizada (`make_key`), y helpers de lectura/escritura del almacén.
+- Nuevo endpoint `POST /api/reconciliations/confirm`. `confirmMatch()` en el frontend pasó de ser
+  un `alert()` local a llamar de verdad al backend.
+- `/api/analyze-excel` sobreescribe el resultado del matching heurístico con un nuevo estado
+  `reconciled` para cualquier línea que ya tenga una confirmación guardada — así no se vuelve a
+  presentar la misma ambigüedad al recargar un Excel que se solape en fechas con uno ya revisado.
+  Nuevo badge "Ya Conciliado" en el frontend, distinto de "Nuevo Movimiento" y "Posible Coincidencia".
+- Diseño documentado en `CLAUDE.md` antes de implementar, incluida la limitación conocida: dos
+  movimientos con fecha+importe+descripción idénticos comparten clave (no hay ID nativo en el
+  extracto bancario).
+- De paso, definidas en CSS las clases `.badge-danger/warning/success/info` que ya se usaban en
+  JS pero nunca tuvieron estilo propio.
+
 ## 0.1.4.5 - 2026-07-18
 
 Investigaciones de diagnóstico de la conciliación: logging no visible y "Ver Registro Asociado"
