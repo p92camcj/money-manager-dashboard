@@ -2,6 +2,8 @@ import io
 import re
 import json
 import os
+import logging
+from logging.handlers import RotatingFileHandler
 from collections import Counter
 import requests
 import pandas as pd
@@ -13,15 +15,31 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Fuerza stdout a line-buffering: cuando el proceso no está atado a una consola
-# interactiva "de verdad" (p.ej. lanzado desde launch.py/launch.bat en vez de
-# `python app.py` en una terminal), Python usa buffering por bloques y los
-# print() de diagnóstico ([analyze-excel], Proxying...) pueden quedar retenidos
-# en el buffer sin mostrarse hasta que el proceso termina. Con un servidor Flask
-# de larga duración eso equivale a "nunca se ven". Esto lo evita de forma
-# permanente sin depender de recordar usar flush=True en cada print().
+# La consola de Windows puede "perder" los print() de diagnóstico por varios
+# motivos fuera de nuestro control (block-buffering de stdout, QuickEdit Mode
+# de cmd.exe congelando la salida al hacer clic en la ventana, etc). En vez de
+# perseguir cada motivo posible, los logs de diagnóstico ([analyze-excel],
+# Proxying..., [reconciliations]) van también a un fichero rotado en logs/
+# app.log — siempre disponible aunque la consola no muestre nada nuevo.
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(line_buffering=True)
+
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+logger = logging.getLogger("money_manager_dashboard")
+logger.setLevel(logging.INFO)
+_log_formatter = logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
+
+_console_handler = logging.StreamHandler(sys.stdout)
+_console_handler.setFormatter(_log_formatter)
+logger.addHandler(_console_handler)
+
+_file_handler = RotatingFileHandler(
+    os.path.join(LOG_DIR, "app.log"), maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+)
+_file_handler.setFormatter(_log_formatter)
+logger.addHandler(_file_handler)
 
 from backend.reconciliation import match_bank_transactions
 from backend.reconciliation_store import make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation
@@ -104,7 +122,7 @@ def xml_to_dict(xml_data):
             transactions.append(transaction)
         return transactions
     except Exception as e:
-        print(f"Error parsing XML: {e}")
+        logger.error(f"Error parsing XML: {e}")
         return []
 
 @app.route('/')
@@ -129,7 +147,7 @@ def proxy(endpoint):
     params = request.args.to_dict()
     
     try:
-        print(f"Proxying {request.method} to: {url} (Timeout: 15s)")
+        logger.info(f"Proxying {request.method} to: {url} (Timeout: 15s)")
         if request.method == 'GET':
             resp = requests.get(url, params=params, timeout=15)
         else:
@@ -161,7 +179,7 @@ def proxy(endpoint):
     except requests.exceptions.Timeout:
         return jsonify({"error": "Timeout", "demo_mode": True}), 504
     except Exception as e:
-        print(f"Proxy Error: {e}")
+        logger.error(f"Proxy Error: {e}")
         return jsonify({"error": str(e), "demo_mode": True}), 503
 
 def detect_header_row(raw_df, max_scan=30):
@@ -214,11 +232,11 @@ def analyze_excel():
         raw_df = pd.read_excel(io.BytesIO(file_bytes), header=None)
         header_row_idx = detect_header_row(raw_df)
         if header_row_idx is None:
-            print("[analyze-excel] No se detectó fila de cabecera con 'fecha'/'importe'; usando fallback skiprows=10")
+            logger.info("[analyze-excel] No se detectó fila de cabecera con 'fecha'/'importe'; usando fallback skiprows=10")
             skiprows = 10
         else:
             skiprows = header_row_idx + 1
-            print(f"[analyze-excel] Cabecera detectada en fila {header_row_idx} (0-indexada); saltando {skiprows} filas")
+            logger.info(f"[analyze-excel] Cabecera detectada en fila {header_row_idx} (0-indexada); saltando {skiprows} filas")
 
         df = pd.read_excel(io.BytesIO(file_bytes), header=None, skiprows=skiprows)
 
@@ -235,9 +253,9 @@ def analyze_excel():
 
         parsed_dates = pd.to_datetime(df['Fecha'], errors='coerce', dayfirst=True)
         valid_rows = parsed_dates.notna() & df['Importe'].notna()
-        print(f"[analyze-excel] Filas totales en Excel: {len(df)} | Filas con fecha+importe válidos: {valid_rows.sum()}")
+        logger.info(f"[analyze-excel] Filas totales en Excel: {len(df)} | Filas con fecha+importe válidos: {valid_rows.sum()}")
         if valid_rows.any():
-            print(f"[analyze-excel] Rango de fechas del Excel: {parsed_dates[valid_rows].min().date()} -> {parsed_dates[valid_rows].max().date()}")
+            logger.info(f"[analyze-excel] Rango de fechas del Excel: {parsed_dates[valid_rows].min().date()} -> {parsed_dates[valid_rows].max().date()}")
 
         phone_url = get_phone_url()
         min_date = parsed_dates.min()
@@ -250,16 +268,16 @@ def analyze_excel():
             end_str = (max_date + pd.Timedelta(days=15)).strftime('%Y-%m-%d')
 
         mm_url = f"{phone_url}/moneyBook/getDataByPeriod?startDate={start_str}&endDate={end_str}"
-        print(f"[analyze-excel] Consultando Money Manager: {mm_url}")
+        logger.info(f"[analyze-excel] Consultando Money Manager: {mm_url}")
         try:
             resp = requests.get(mm_url, timeout=10)
             resp.raise_for_status()
             real_transactions = xml_to_dict(resp.content)
-            print(f"[analyze-excel] Money Manager respondió {resp.status_code} | {len(real_transactions)} transacciones recibidas")
+            logger.info(f"[analyze-excel] Money Manager respondió {resp.status_code} | {len(real_transactions)} transacciones recibidas")
             for sample in real_transactions[:3]:
-                print(f"[analyze-excel]   muestra: { {k: sample.get(k) for k in ('mbDate', 'mbCash', 'mbContent', 'inOutType', 'assetId')} }")
+                logger.info(f"[analyze-excel]   muestra: { {k: sample.get(k) for k in ('mbDate', 'mbCash', 'mbContent', 'inOutType', 'assetId')} }")
         except Exception as e:
-            print(f"[analyze-excel] ERROR consultando Money Manager en {mm_url}: {e}")
+            logger.error(f"[analyze-excel] ERROR consultando Money Manager en {mm_url}: {e}")
             real_transactions = []
 
         # Usar el nuevo motor de reconciliación basado en Pandas
@@ -288,11 +306,11 @@ def analyze_excel():
                 reconciled_count += 1
 
         status_counts = Counter(p['status'] for p in proposals)
-        print(f"[analyze-excel] Resultado de conciliación ({len(proposals)} filas, {reconciled_count} ya conciliadas antes): {dict(status_counts)}")
+        logger.info(f"[analyze-excel] Resultado de conciliación ({len(proposals)} filas, {reconciled_count} ya conciliadas antes): {dict(status_counts)}")
 
         return jsonify(clean_nans(proposals))
     except Exception as e:
-        print(f"[analyze-excel] ERROR inesperado: {e}")
+        logger.error(f"[analyze-excel] ERROR inesperado: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/reconciliations/confirm', methods=['POST'])
@@ -311,7 +329,7 @@ def confirm_reconciliation_endpoint():
 
     try:
         key = confirm_reconciliation(date_str, amount, description, mm_id)
-        print(f"[reconciliations] Confirmado {date_str} | {amount} | {description[:40]!r} -> mm_id={mm_id}")
+        logger.info(f"[reconciliations] Confirmado {date_str} | {amount} | {description[:40]!r} -> mm_id={mm_id}")
         return jsonify({"status": "success", "key": key})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

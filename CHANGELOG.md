@@ -2,6 +2,21 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.2.1.7 - 2026-07-18
+
+Logging a fichero (causa real de que no se viera nada en terminal) y fix de "Ver Registro Asociado".
+
+- El fix anterior de `sys.stdout.reconfigure` no fue suficiente: la consola de Windows puede
+  congelar toda la salida nueva por QuickEdit Mode (al hacer clic dentro de la ventana), entre
+  otros motivos fuera de nuestro control. Sustituidos todos los `print()` de diagnóstico por un
+  `logger` con dos salidas: consola y `logs/app.log` (rotado, gitignorado) — el fichero siempre
+  tiene el historial aunque la consola no muestre nada nuevo.
+- **Bug real encontrado**: `showTransaction()` referenciaba `#searchInput` y `.tab-btn`, IDs/clases
+  que ya no existen en `index.html` (restos de una iteración anterior de la UI) — reventaba con
+  `TypeError` en cuanto se pulsaba "Ver Registro Asociado", exista o no la transacción. Corregido
+  a `#filterSearch` y `switchTab('transactions')`. Verificado en navegador real contra datos reales.
+- Cache-busting `script.js` v10→v11.
+
 ## 0.2.0.6 - 2026-07-18
 
 Nueva funcionalidad: persistencia local de conciliaciones confirmadas.

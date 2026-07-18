@@ -25,7 +25,13 @@ consultados en caliente a través del proxy.
 ```
 static/           Frontend estático servido directamente por Flask (sin build step)
   index.html       Estructura de la SPA (tabs: Dashboard, Transacciones, Presupuestos, Conciliación, Ajustes)
-  script.js        Toda la lógica de UI: fetch a /api/..., render de tablas/gráficas, modal de edición
+  script.js        Toda la lógica de UI: fetch a /api/..., render de tablas/gráficas, modal de edición.
+                   Sin build step ni framework: sin tipado ni linter que detecte referencias a IDs
+                   de elementos que ya no existen en index.html. Ya hubo un caso real (2026-07-18,
+                   showTransaction() referenciaba #searchInput y .tab-btn, restos de una iteración
+                   anterior de la UI que ya no existían — usa #filterSearch y switchTab()). Si
+                   tocas una función que lleva tiempo sin usarse, verifica los IDs/clases contra el
+                   index.html actual antes de asumir que siguen vigentes.
   js/analytics.js  Cálculos auxiliares de analítica para el dashboard
   style.css        Estilos (glassmorphism)
 
@@ -88,12 +94,18 @@ como si fuera parte del layout lateral — cuidado al tocar el layout raíz.
 número cada vez que edites esos ficheros — si no, el navegador puede seguir sirviendo la versión
 cacheada y un fix que funciona en el backend puede parecer que "no hace nada" en el frontend.
 
-**stdout con buffering por bloques:** cuando Flask se lanza vía `launch.py` (no interactivo, sin
-consola "real" detectada por Python) en vez de `python app.py` en una terminal, `sys.stdout` puede
-quedar en modo block-buffered en vez de line-buffered — los `print()` de diagnóstico quedan
-retenidos en el buffer y, con un servidor de larga duración, nunca llegan a mostrarse. `app.py` y
-`launch.py` fuerzan `sys.stdout.reconfigure(line_buffering=True)` al arrancar para evitarlo de
-forma permanente. Si añades logging en otro entrypoint, aplica el mismo fix ahí.
+**Logging de diagnóstico — usa `logger`, no `print()`:** la consola de Windows puede "perder" la
+salida de un proceso de larga duración por varios motivos fuera de nuestro control — block-
+buffering de stdout, o **QuickEdit Mode de cmd.exe**, que congela toda la salida nueva de la
+consola en cuanto el usuario hace clic dentro de la ventana para seleccionar texto (muy fácil que
+pase sin querer con `launch.bat`, y el proceso sigue funcionando con normalidad, solo que no se ve
+nada nuevo). En vez de perseguir cada motivo posible, `app.py` define un `logger` (
+`logging.getLogger("money_manager_dashboard")`) con dos handlers: consola (`sys.stdout`, con
+`line_buffering=True` forzado) y un `RotatingFileHandler` que escribe en `logs/app.log` (fuera de
+git — puede contener descripciones de transacciones reales). **Usa siempre `logger.info(...)` /
+`logger.error(...)` para logging de diagnóstico, nunca `print()`** — así queda garantizado en el
+fichero aunque la consola no muestre nada. Si un log parece no aparecer, revisa `logs/app.log`
+antes de asumir que el código no se ejecutó.
 
 ## Configuración: `config.json`
 

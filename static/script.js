@@ -820,13 +820,13 @@ function prefillAddModal(date, amount, content, defaultAccount) {
 }
 
 function showTransaction(id) {
-    currentFilter.text = ''; // Resetear texto
-    document.getElementById('searchInput').value = '';
-    
+    currentFilter.searchStr = null; // Resetear texto
+    document.getElementById('filterSearch').value = '';
+
     // Filtrar para mostrar solo esta id temporalmente
     let filtered = transactionsData.filter(t => String(t.id) === String(id));
     if(filtered.length > 0) {
-        document.querySelectorAll('.tab-btn')[0].click(); // Ir a ventana de transacciones
+        switchTab('transactions'); // Ir a ventana de transacciones
         let savedData = window.AnalyticsEngine ? AnalyticsEngine.applyAdvancedFilters : null;
         if(savedData) AnalyticsEngine.applyAdvancedFilters = () => filtered; // Forzar tabla a mostrar 1 resultado
         renderTransactions();

@@ -16,3 +16,6 @@ samples/
 
 # Historial personal de conciliación (por usuario, no es código del proyecto)
 data/
+
+# Logs de diagnóstico (pueden contener descripciones de transacciones reales)
+logs/
