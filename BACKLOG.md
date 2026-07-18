@@ -62,7 +62,9 @@ espera realmente el servidor PC Manager. Pendiente de instrumentar (log del payl
 
 ### Propuesta #4: matching no comparte estado entre ficheros de la misma tanda
 
-- **Estado:** identificado, no resuelto — a propósito, fuera de alcance de la Propuesta #3.
+- **Estado:** resuelto PARCIALMENTE — solo cuando el usuario asocia una cuenta de Money Manager a
+  cada fichero (Propuesta #5). Sigue sin resolver cuando ningún fichero de la tanda tiene cuenta
+  asociada.
 - **Detectado:** 2026-07-18, durante la implementación de subida múltiple (Propuesta #3).
 
 Al subir varios ficheros a la vez, cada uno se concilia contra Money Manager por separado
@@ -70,11 +72,17 @@ Al subir varios ficheros a la vez, cada uno se concilia contra Money Manager por
 "ya emparejado"). Si el mismo movimiento real aparece en dos ficheros distintos a la vez — p. ej.
 una transferencia entre dos cuentas propias del usuario, visible tanto en el extracto del banco
 origen como en el del banco destino — cada fichero podría proponerlo como "nuevo movimiento" sin
-saber que el otro fichero ya lo vio. No observado con datos reales todavía (ningún par de ficheros
-de `samples/` comparte un movimiento real), pero es una consecuencia estructural del diseño actual,
-no una hipótesis. Pendiente de decidir si merece la pena resolverlo (y cómo — ¿deduplicar entre
-ficheros de la misma tanda antes de conciliar contra Money Manager?) o si el usuario prefiere
-revisarlo manualmente cuando pase.
+saber que el otro fichero ya lo vio.
+
+**Caso de transferencias resuelto en Propuesta #5** (2026-07-18): cuando cada fichero tiene su
+cuenta asociada, `match_bank_transactions()` reconoce que ambas líneas (la negativa del banco
+origen, la positiva del banco destino) corresponden a los dos lados de la MISMA transacción de
+Money Manager y las resuelve como `exact_match`/`probable_match` en vez de "nuevo" — ver
+`CLAUDE.md`, sección "Matching acotado por cuenta y transferencias entre bancos".
+
+**Sigue pendiente**: sin cuenta asociada (uso mínimo del selector, o cualquier otro tipo de
+movimiento duplicado entre ficheros que no sea una transferencia con cuentas asociadas), la
+limitación original persiste tal cual estaba documentada.
 
 ### Propuesta #2: distribución a amigos con un clic y auto-actualización
 
@@ -101,6 +109,40 @@ Prerrequisitos identificados antes de poder implementarlo:
 ---
 
 ## Resueltos
+
+### Propuesta #5: cuenta asociada por fichero y matching de transferencias entre bancos
+
+- **Resuelto:** 2026-07-18, versión `0.6.0.12`.
+- **Anotado:** 2026-07-18, ampliación directa de la Propuesta #3 pedida en la misma sesión.
+
+Cada fichero subido en conciliación puede asociarse opcionalmente a una cuenta real de Money
+Manager (selector poblado con `assetsData`, junto a la etiqueta ya existente). Con cuenta
+asociada, `match_bank_transactions()` filtra estrictamente los candidatos a esa cuenta (menos
+falsos positivos entre cuentas con importes parecidos) y, para transferencias
+(`inOutType == 'Transferencia'`), reconoce el lado (origen/destino) según el signo del importe
+bancario y el `assetId`/`toAssetId`(`targetAssetId`) de la transacción — así una transferencia
+real entre dos bancos propios (p. ej. Cajasur → Revolut) se resuelve como match desde AMBOS
+extractos sin que el primero en procesarse "se quede" con la transacción. Ver detalle completo en
+`CLAUDE.md`, sección "Matching acotado por cuenta y transferencias entre bancos". Resuelve
+parcialmente la Propuesta #4 (ver arriba).
+
+Frontend: selector de cuenta (opcional) junto a la etiqueta de cada fichero pendiente de subir;
+badge "🔁 Transferencia interna" en las propuestas (y en cada candidato individual) que encajan con
+el lado de una transferencia, para distinguirlas visualmente de un duplicado exacto normal.
+
+**Verificado con datos sintéticos** (no con el móvil real ni con extractos reales de `samples/` —
+no hay ningún par de extractos reales con una transferencia compartida todavía): script ad-hoc
+(no comprometido al repo) que cubre (1) el fichero del banco origen encuentra la transferencia
+como `exact_match`/lado origen, (2) el fichero del banco destino encuentra la MISMA transacción
+como `exact_match`/lado destino sin colisión, (3) dentro del mismo fichero, dos líneas con igual
+importe no pueden reclamar el mismo lado dos veces, (4) el filtro estricto por cuenta evita un
+falso positivo con un movimiento de otra cuenta de importe idéntico, (5) sin `account_id` el
+comportamiento previo queda intacto. Además, verificado de extremo a extremo vía el test client de
+Flask (`/api/analyze-excel` con 2 ficheros + `accountIds` + XML de Money Manager simulado con una
+transferencia real). Pendiente de confirmar contra un caso real cuando el usuario tenga una
+transferencia entre bancos en extractos reales — en particular, qué campo (`toAssetId` vs
+`targetAssetId`) rellena de verdad el XML de `getDataByPeriod` (no verificado en vivo, ver nota en
+`CLAUDE.md`).
 
 ### Propuesta #3: soporte CSV y subida múltiple con etiqueta por fichero
 

@@ -2,6 +2,40 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.6.0.12 - 2026-07-18
+
+Conciliación bancaria: cuenta asociada por fichero y matching de transferencias entre bancos
+(Propuesta #5, ampliación de la Propuesta #3).
+
+- Cada fichero subido puede asociarse opcionalmente a una cuenta real de Money Manager (nuevo
+  selector junto a la etiqueta, poblado con `assetsData`). `/api/analyze-excel` acepta `accountIds`
+  en el form-data (mismo orden que `files`, vacío si no se asocia ninguna).
+- `match_bank_transactions()` (`backend/reconciliation.py`) acepta un `account_id` opcional: con
+  cuenta asociada, filtra estrictamente los candidatos a esa cuenta (menos falsos positivos entre
+  cuentas con importes parecidos).
+- **Transferencias entre cuentas propias reconocidas desde los dos extractos a la vez**: una
+  transferencia en Money Manager es una sola transacción (`assetId` origen, `toAssetId`/
+  `targetAssetId` destino), pero en dos bancos reales aparece como dos líneas (negativa en el
+  origen, positiva en el destino). Con cuenta asociada en ambos ficheros, cada lado se resuelve y
+  se consume por separado (`matched_origin`/`matched_destination`), así que el extracto del banco
+  origen y el del banco destino encuentran la MISMA transacción de Money Manager como match, sin
+  que el primero en procesarse se la "quede" — resuelve parcialmente la Propuesta #4 del
+  `BACKLOG.md` (matching entre ficheros de la misma tanda) para este caso concreto.
+  - Campo de cuenta destino en el XML de lectura sin verificar en vivo contra el móvil real
+    (`toAssetId` vs `targetAssetId`, ambos existen en el esquema de PC Manager) — el código se
+    queda con el que venga relleno; ver nota en `CLAUDE.md`.
+- Cada propuesta lleva ahora `is_transfer` y `transfer_role` (`'origen'`/`'destino'`); cada
+  candidato de `candidates[]` lleva su propio `is_transfer`. Frontend: badge "🔁 Transferencia
+  interna" en las propuestas y candidatos afectados, para distinguirlos de un duplicado exacto
+  normal.
+- Verificado con datos sintéticos (script ad-hoc, no comprometido al repo) — matching por lados,
+  no reutilización del mismo lado dentro de un fichero, filtro estricto por cuenta, y comportamiento
+  previo intacto sin `account_id` — y de extremo a extremo con el test client de Flask simulando
+  una respuesta XML de Money Manager con una transferencia real. No hay en `samples/` ningún par
+  de extractos reales que compartan una transferencia todavía; pendiente de confirmar con un caso
+  real cuando aparezca.
+- `BACKLOG.md`: Propuesta #4 marcada como resuelta parcialmente; nueva Propuesta #5 (resuelta).
+
 ## 0.5.0.11 - 2026-07-18
 
 Conciliación bancaria: subida múltiple con etiqueta por fichero (Bloque 2 de Propuesta #3).

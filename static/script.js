@@ -733,12 +733,35 @@ function handleFilesSelected() {
     const fileInput = document.getElementById('excelInput');
     const files = Array.from(fileInput.files || []);
     if (files.length === 0) return;
-    pendingFiles = files.map(file => ({ file, label: defaultLabelFor(file.name) }));
+    pendingFiles = files.map(file => ({ file, label: defaultLabelFor(file.name), accountId: '' }));
     renderFileLabelsList();
 }
 
 function updatePendingLabel(idx, value) {
     pendingFiles[idx].label = value.trim() || defaultLabelFor(pendingFiles[idx].file.name);
+}
+
+function updatePendingAccount(idx, value) {
+    pendingFiles[idx].accountId = value;
+}
+
+// Lista plana {assetId, assetName} de todas las cuentas reales de Money Manager, para el
+// selector opcional "cuenta asociada" de cada fichero subido en conciliación.
+function flattenAssets() {
+    const out = [];
+    (assetsData || []).forEach(g => {
+        if (!g.children) return;
+        g.children.forEach(a => out.push({ assetId: a.assetId, assetName: a.assetName }));
+    });
+    return out;
+}
+
+function accountOptionsHtml(selectedId) {
+    const accounts = flattenAssets();
+    const opts = accounts.map(a =>
+        `<option value="${a.assetId}" ${String(selectedId) === String(a.assetId) ? 'selected' : ''}>${a.assetName}</option>`
+    ).join('');
+    return `<option value="">Sin cuenta asociada</option>${opts}`;
 }
 
 function cancelPendingFiles() {
@@ -760,11 +783,16 @@ function renderFileLabelsList() {
             <span style="flex:1; font-size:0.9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${pf.file.name}">${pf.file.name}</span>
             <input type="text" value="${pf.label}" onchange="updatePendingLabel(${idx}, this.value)"
                    placeholder="Etiqueta" style="width:180px; padding:6px 10px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); border-radius:8px; color:white;">
+            <select onchange="updatePendingAccount(${idx}, this.value)"
+                    title="Cuenta de Money Manager asociada a este fichero (opcional) — acota el matching a esa cuenta y permite reconocer transferencias entre cuentas propias."
+                    style="width:200px; padding:6px 10px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); border-radius:8px; color:white;">
+                ${accountOptionsHtml(pf.accountId)}
+            </select>
         </div>
     `).join('');
     container.innerHTML = `
         <h3>Ficheros seleccionados (${pendingFiles.length})</h3>
-        <p style="color:var(--text-muted); font-size:0.85rem; margin:5px 0 15px;">Ponle una etiqueta corta a cada uno (p.ej. "Revolut", "Cuenta Sabadell") para distinguirlos en la lista de propuestas.</p>
+        <p style="color:var(--text-muted); font-size:0.85rem; margin:5px 0 15px;">Ponle una etiqueta corta a cada uno (p.ej. "Revolut", "Cuenta Sabadell") para distinguirlos en la lista de propuestas. La cuenta asociada es opcional: si la indicas, el matching se acota a esa cuenta y se reconocen transferencias entre cuentas propias.</p>
         <div>${rowsHtml}</div>
         <div class="modal-buttons" style="margin-top:15px;">
             <button class="btn-secondary btn-sm" onclick="cancelPendingFiles()">Cancelar</button>
@@ -783,6 +811,7 @@ async function confirmUploadFiles() {
         pendingFiles.forEach(pf => {
             formData.append('files', pf.file);
             formData.append('labels', pf.label);
+            formData.append('accountIds', pf.accountId || '');
         });
         formData.append('windowDays', 3);
 
@@ -876,8 +905,9 @@ function renderProposalsList() {
         } else if (p.status === 'suggested_match' || p.status === 'probable_match') {
             candidatesHtml = `<div style="margin-top:10px;"><strong>Posibles Asociados en MoneyManager:</strong><ul style="list-style:none; padding-left:0; margin-top:5px;">`;
             (p.candidates || []).forEach(cand => {
+                const candTransferTag = cand.is_transfer ? ` <span class="badge badge-info" style="font-size:0.7rem;">🔁 Transferencia</span>` : '';
                 candidatesHtml += `<li style="font-size:0.85rem; padding:5px; background:rgba(255,255,255,0.05); margin-bottom:5px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
-                                   <div>${cand.date} | <strong>${formatCurrency(cand.amount)}</strong> | ${cand.description.substring(0,25)}... | <em>${cand.asset}</em></div>
+                                   <div>${cand.date} | <strong>${formatCurrency(cand.amount)}</strong> | ${cand.description.substring(0,25)}... | <em>${cand.asset}</em>${candTransferTag}</div>
                                     <button class="btn-primary btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="confirmMatch('${p.source_id}', '${cand.id}')">Confirmar Este</button>
                                    </li>`;
             });
@@ -894,13 +924,18 @@ function renderProposalsList() {
             candidatesHtml = `<div style="margin-top:10px;"><button class="btn-primary btn-sm" onclick="prefillAddModal('${p.date}', ${p.amount}, '${cleanDesc}', '${defaultAccount}')">📥 Pre-rellenar y Añadir</button></div>`;
         }
 
+        const transferTag = p.is_transfer
+            ? `<span class="badge badge-info" title="Esta línea encaja con una transferencia entre cuentas propias en Money Manager${p.transfer_role ? ` (lado ${p.transfer_role})` : ''}.">🔁 Transferencia interna</span>`
+            : '';
+
         card.className = `card glass proposal-card ${isDuplicate ? 'duplicate' : 'new'}`;
         card.innerHTML = `
             <div class="proposal-header">
                 <strong>${p.date}</strong>
-                <span style="display:flex; gap:6px;">
+                <span style="display:flex; gap:6px; flex-wrap:wrap;">
                     <span class="badge badge-info" title="${p.source_filename || ''}">${p.source_label || ''}</span>
                     <span class="badge ${badgeColor}">${badgeText}</span>
+                    ${transferTag}
                 </span>
             </div>
             <p>${p.description}</p>

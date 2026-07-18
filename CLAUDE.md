@@ -45,7 +45,10 @@ backend/
                        interno — un bug detectado el 2026-07-18 usaba `best_match.name` /
                        `idx_cand` (posición) en vez del campo `id`, lo que rompía silenciosamente
                        "Ver Registro Asociado" y `confirmMatch` en el frontend. Si tocas esta
-                       función, no reintroduzcas esa confusión entre posición e id real.
+                       función, no reintroduzcas esa confusión entre posición e id real. Acepta un
+                       `account_id` opcional (el `assetId` de Money Manager asociado al fichero
+                       bancario, elegido en el frontend) — ver "Matching acotado por cuenta y
+                       transferencias entre bancos" más abajo.
   budget_engine.py    BudgetEngine: construye el árbol jerárquico presupuesto vs. gasto real
                        por categoría/subcategoría, y calcula flujos de caja (ingreso/gasto/
                        transferencias) ignorando transferencias en el cómputo de presupuesto.
@@ -62,31 +65,37 @@ app.py             Flask app. Sirve static/, y expone:
                               limpia JSON no estándar del móvil (comillas sueltas, comas finales).
   /api/analyze-excel       -> conciliación: recibe UNO O VARIOS extractos bancarios a la vez
                               (Excel y/o CSV mezclados; el nombre del endpoint es historia, no
-                              una limitación). Campos del form-data: `files` (uno o más ficheros)
-                              y `labels` (una etiqueta por fichero, MISMO orden que `files` —
-                              si una etiqueta viene vacía, se usa el nombre de fichero). Cada
-                              fichero se parsea con
+                              una limitación). Campos del form-data: `files` (uno o más ficheros),
+                              `labels` (una etiqueta por fichero, MISMO orden que `files` — si una
+                              etiqueta viene vacía, se usa el nombre de fichero) y `accountIds`
+                              (opcional, MISMO orden que `files` — el `assetId` de Money Manager
+                              que el usuario asoció a ese fichero en el selector del frontend;
+                              cadena vacía si no se asoció ninguna). Cada fichero se parsea con
                               backend/bank_statement_parser.py::parse_bank_statement() (ver
                               sección dedicada). Se calcula el rango de fechas COMBINADO de
                               todos los ficheros de la tanda y se hace una única llamada a
                               `getDataByPeriod` — no una por fichero. El matching
                               (`match_bank_transactions`) se hace por SEPARADO para cada fichero
-                              contra ese mismo conjunto de transacciones del móvil: dos ficheros
-                              no se enteran el uno del otro (limitación conocida, ver
-                              `BACKLOG.md` — un movimiento que aparezca en dos extractos a la vez,
-                              p.ej. una transferencia entre cuentas propias, puede proponerse como
-                              "nuevo" en ambos). Cada propuesta lleva `source_label` y
-                              `source_filename`, y `source_id` va prefijado por índice de fichero
-                              (`f0_...`, `f1_...`) para que sea único entre ficheros de la misma
-                              tanda. Si un fichero individual no tiene estructura reconocible, no
-                              aborta toda la tanda: se reporta en `file_errors` y se sigue con el
-                              resto. Respuesta: `{"proposals": [...], "file_errors": [...]}` (no
-                              un array plano). Emite logs con prefijo "[analyze-excel]" (fila/
-                              columnas de cabecera detectadas por fichero, filas parseadas, rango
-                              de fechas combinado, URL y rango consultado al móvil, éxito/excepción
-                              de esa llamada, muestra de transacciones recibidas, y resumen final
-                              de resultados por estado: exact_match/probable_match/suggested_match/
-                              reconciled/new) — diagnóstico permanente (a consola Y a
+                              contra ese mismo conjunto de transacciones del móvil, pasando el
+                              `account_id` de ese fichero si lo tiene (ver "Matching acotado por
+                              cuenta y transferencias entre bancos" más abajo). Sin cuenta
+                              asociada en ningún fichero de la tanda, dos ficheros siguen sin
+                              enterarse el uno del otro (limitación conocida, ver `BACKLOG.md` —
+                              un movimiento que aparezca en dos extractos a la vez, p.ej. una
+                              transferencia entre cuentas propias, puede proponerse como "nuevo"
+                              en ambos). Cada propuesta lleva `source_label` y `source_filename`,
+                              y `source_id` va prefijado por índice de fichero (`f0_...`,
+                              `f1_...`) para que sea único entre ficheros de la misma tanda. Si un
+                              fichero individual no tiene estructura reconocible, no aborta toda
+                              la tanda: se reporta en `file_errors` y se sigue con el resto.
+                              Respuesta: `{"proposals": [...], "file_errors": [...]}` (no un array
+                              plano). Emite logs con prefijo "[analyze-excel]" (fila/columnas de
+                              cabecera detectadas por fichero + cuenta asociada, filas parseadas,
+                              rango de fechas combinado, URL y rango consultado al móvil,
+                              éxito/excepción de esa llamada, muestra de transacciones recibidas,
+                              y resumen final de resultados por estado: exact_match/
+                              probable_match/suggested_match/reconciled/new) — diagnóstico
+                              permanente (a consola Y a
                               `logs/app.log`, ver "Logging de diagnóstico" más abajo) para depurar
                               por qué la conciliación no encuentra matches.
   /api/budget-hierarchy    -> pide transacciones + resumen de presupuesto al móvil, llama a BudgetEngine
@@ -326,6 +335,52 @@ solape en fechas con uno ya revisado.
   era solo un `alert()` local sin llamada al backend). Recibe `date`, `amount`, `description`
   (los mismos campos de la propuesta, para recalcular la clave) y `mm_id` (el candidato elegido);
   escribe la entrada en `data/reconciliations.json`.
+
+### Matching acotado por cuenta y transferencias entre bancos
+
+Al etiquetar cada fichero subido (ver `/api/analyze-excel` más arriba), el usuario puede además
+asociarle **opcionalmente** una cuenta real de Money Manager (`accountIds` en el form-data,
+`account_id` en `match_bank_transactions()`) desde un selector poblado con `assetsData` en el
+frontend (`flattenAssets()` en `script.js`). Sin cuenta asociada, el comportamiento es exactamente
+el de antes (búsqueda sin filtrar por cuenta, una transferencia se consume una sola vez en
+conjunto — ver Propuesta #4 en `BACKLOG.md`).
+
+**Con cuenta asociada**, `match_bank_transactions()` **filtra estrictamente** — no solo prioriza —
+los candidatos a esa cuenta, para reducir falsos positivos entre cuentas distintas con importes
+parecidos:
+
+- **Movimiento normal** (`inOutType` distinto de `Transferencia`): solo se consideran candidatos
+  cuyo `assetId` sea `account_id`.
+- **Transferencia** (`inOutType == 'Transferencia'`): una transferencia en Money Manager es UNA
+  sola transacción con `assetId` = cuenta origen y `toAssetId`/`targetAssetId` = cuenta destino —
+  pero en dos extractos bancarios reales (el del banco origen y el del banco destino) aparece como
+  DOS líneas distintas (una negativa, una positiva). `account_id` puede coincidir con el origen o
+  con el destino de la misma transacción de Money Manager; se usa el signo del importe bancario
+  para decidir el lado (negativo → origen, positivo → destino) y no confundirlos. Cada lado se
+  marca como "consumido" por separado (`matched_origin` / `matched_destination` en el DataFrame
+  interno de `mm_df`, no un único flag `matched` como en el resto del matching) — así, la MISMA
+  transacción de Money Manager puede resolverse como match desde el fichero del banco origen Y
+  desde el fichero del banco destino, sin que el primero en procesarse "se quede" con ella (cada
+  fichero se sigue analizando en una llamada independiente a `match_bank_transactions()`, así que
+  esto funciona sin que un fichero necesite saber nada del otro). Dentro de un mismo fichero, un
+  lado ya consumido no se puede reclamar dos veces (dos líneas bancarias con igual importe no
+  pueden reclamar el mismo lado).
+  - **Campo real de la cuenta destino sin verificar en vivo**: el esquema de columnas de PC
+    Manager (`reference/all_mm.js`) declara tanto `toAssetId` como `targetAssetId`; no hay
+    certeza de cuál rellena realmente el XML de `getDataByPeriod` (ver la inconsistencia ya
+    documentada más arriba entre vocabulario de lectura y escritura). `match_bank_transactions()`
+    se queda con el que venga relleno de los dos, sin asumir cuál es. Si compruebas contra el
+    móvil real cuál es, actualiza esto.
+- **Sin cuenta asociada en el fichero**: no se intenta adivinar el lado de una transferencia —
+  se comporta como un movimiento normal de consumo único (comportamiento previo intacto).
+- Cada propuesta resultante lleva `is_transfer` (bool) y, si aplica, `transfer_role`
+  (`'origen'`/`'destino'`/`None`); cada candidato de `candidates[]` lleva su propio `is_transfer`.
+  El frontend usa esto para mostrar un badge "🔁 Transferencia interna" en vez de dejar que parezca
+  un duplicado exacto sin explicación.
+- **Verificado solo con datos sintéticos** (no hay en `samples/` ningún par de extractos reales que
+  compartan una transferencia entre bancos todavía) — ver script de verificación usado durante el
+  desarrollo, no comprometido al repo. Si aparece un caso real que no encaje, revisar primero el
+  campo de cuenta destino (punto anterior) antes de asumir que la lógica de lados está mal.
 
 ## Versionado
 
