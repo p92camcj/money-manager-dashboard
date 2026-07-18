@@ -1,4 +1,3 @@
-import io
 import re
 import json
 import os
@@ -43,6 +42,7 @@ logger.addHandler(_file_handler)
 
 from backend.reconciliation import match_bank_transactions
 from backend.reconciliation_store import make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation
+from backend.bank_excel_parser import parse_bank_excel, BankExcelFormatError
 from backend.budget_engine import BudgetEngine
 
 app = Flask(__name__, static_folder='static')
@@ -182,41 +182,6 @@ def proxy(endpoint):
         logger.error(f"Proxy Error: {e}")
         return jsonify({"error": str(e), "demo_mode": True}), 503
 
-def detect_header_row(raw_df, max_scan=30):
-    """Busca la primera fila que contenga 'fecha' e 'importe' entre sus celdas.
-
-    Los extractos bancarios traen un número variable de filas de metadatos
-    (nombre de cuenta, titular, periodo...) antes de la cabecera real, y ese
-    número cambia según el banco. Devuelve el índice de la fila de cabecera,
-    o None si no se encuentra en las primeras `max_scan` filas.
-    """
-    for idx in range(min(max_scan, len(raw_df))):
-        row_values = raw_df.iloc[idx].astype(str).str.lower()
-        has_fecha = row_values.str.contains('fecha').any()
-        has_importe = row_values.str.contains('importe').any()
-        if has_fecha and has_importe:
-            return idx
-    return None
-
-
-def parse_spanish_amount(val):
-    """Normaliza importes que pueden venir como texto con formato español
-    (punto de miles, coma decimal, p.ej. '1.234,56') en vez de float nativo."""
-    if pd.isna(val):
-        return None
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = re.sub(r'[€$\s]', '', str(val).strip())
-    if ',' in s and '.' in s:
-        s = s.replace('.', '').replace(',', '.')
-    elif ',' in s:
-        s = s.replace(',', '.')
-    try:
-        return float(s)
-    except ValueError:
-        return None
-
-
 @app.route('/api/analyze-excel', methods=['POST'])
 def analyze_excel():
     if 'file' not in request.files:
@@ -228,28 +193,11 @@ def analyze_excel():
     file_bytes = file.read()
 
     try:
-        # Detección dinámica de la fila de cabecera (varía según el banco)
-        raw_df = pd.read_excel(io.BytesIO(file_bytes), header=None)
-        header_row_idx = detect_header_row(raw_df)
-        if header_row_idx is None:
-            logger.info("[analyze-excel] No se detectó fila de cabecera con 'fecha'/'importe'; usando fallback skiprows=10")
-            skiprows = 10
-        else:
-            skiprows = header_row_idx + 1
-            logger.info(f"[analyze-excel] Cabecera detectada en fila {header_row_idx} (0-indexada); saltando {skiprows} filas")
-
-        df = pd.read_excel(io.BytesIO(file_bytes), header=None, skiprows=skiprows)
-
-        # Asignar nombres dinámicamente según la cantidad de columnas del excel bancario
-        num_cols = len(df.columns)
-        base_cols = ['Fecha', 'Concepto', 'Info', 'Importe', 'Total', 'Nada']
-        if num_cols <= len(base_cols):
-            df.columns = base_cols[:num_cols]
-        else:
-            df.columns = base_cols + [f'C{i}' for i in range(len(base_cols), num_cols)]
-
-        # Formato español: punto de miles / coma decimal en importes exportados como texto
-        df['Importe'] = df['Importe'].apply(parse_spanish_amount)
+        # Detección genérica de la estructura del banco (cabecera + columnas por alias,
+        # ver backend/bank_excel_parser.py) — lanza BankExcelFormatError si no hay confianza
+        # razonable, en vez de asumir algo silenciosamente incorrecto.
+        df, header_row_idx, column_map = parse_bank_excel(file_bytes)
+        logger.info(f"[analyze-excel] Cabecera detectada en fila {header_row_idx} (0-indexada) | columnas: {column_map}")
 
         parsed_dates = pd.to_datetime(df['Fecha'], errors='coerce', dayfirst=True)
         valid_rows = parsed_dates.notna() & df['Importe'].notna()
@@ -280,8 +228,6 @@ def analyze_excel():
             logger.error(f"[analyze-excel] ERROR consultando Money Manager en {mm_url}: {e}")
             real_transactions = []
 
-        # Usar el nuevo motor de reconciliación basado en Pandas
-        # Usamos las columnas correctas según el DF temporal asignado arriba
         proposals = match_bank_transactions(
             excel_df=df,
             mm_transactions=real_transactions,
@@ -309,6 +255,9 @@ def analyze_excel():
         logger.info(f"[analyze-excel] Resultado de conciliación ({len(proposals)} filas, {reconciled_count} ya conciliadas antes): {dict(status_counts)}")
 
         return jsonify(clean_nans(proposals))
+    except BankExcelFormatError as e:
+        logger.error(f"[analyze-excel] Estructura del Excel no reconocida: {e}")
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"[analyze-excel] ERROR inesperado: {e}")
         return jsonify({"error": str(e)}), 500

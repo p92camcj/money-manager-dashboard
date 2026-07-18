@@ -60,25 +60,6 @@ espera realmente el servidor PC Manager. Pendiente de instrumentar (log del payl
 
 ## Propuestas de mejora pendientes
 
-### Propuesta #1: generalizar el parseo de Excel para distintos bancos
-
-- **Estado:** parcialmente empezado, sin verificar contra los formatos reales.
-- **Anotado:** 2026-07-18.
-
-Ya hay varios extractos reales de distintos bancos en `samples/` (fuera de git):
-`BBVA.xlsx`, `EVO_CC.xlsx`, `EVO_tarjeta.xls`, `sabadell.xls`, además del original de Cajasur.
-
-Lo que ya existe: `detect_header_row()` en `app.py` detecta dinámicamente en qué fila empieza la
-tabla real (busca "fecha"/"importe" en vez de un `skiprows` fijo), lo cual ya generaliza razonablemente bien esa parte.
-
-Lo que **no** está verificado: una vez detectada la cabecera, el mapeo a columnas
-(`base_cols = ['Fecha', 'Concepto', 'Info', 'Importe', 'Total', 'Nada']` en
-`app.py::analyze_excel`) es **posicional fijo** — asume que todos los bancos ponen las columnas en
-ese mismo orden tras la cabecera. No hay ninguna garantía de que eso sea cierto para BBVA/EVO/
-Sabadell. Antes de tocar esto, hay que revisar los Excels reales de `samples/` uno a uno; lo más
-probable es que haga falta mapear columnas por el **texto** de la cabecera detectada en vez de por
-posición.
-
 ### Propuesta #2: distribución a amigos con un clic y auto-actualización
 
 - **Estado:** por diseñar — no implementar todavía, solo anotado.
@@ -105,5 +86,22 @@ Prerrequisitos identificados antes de poder implementarlo:
 
 ## Resueltos
 
-_(vacío por ahora — aquí se archivan los bugs/propuestas de arriba una vez resueltos, con fecha y
-commit)_
+### Propuesta #1: generalizar el parseo de Excel para distintos bancos
+
+- **Resuelto:** 2026-07-18, versión `0.3.0.9`.
+- **Anotado:** 2026-07-18.
+
+Implementado `backend/bank_excel_parser.py::parse_bank_excel()`: detecta la fila de cabecera real
+sin posición fija, mapea columnas por alias exacto normalizado (no por posición — distingue
+`"Fecha"` de `"Fecha valor"`, ver detalle en `CLAUDE.md`, sección "Parseo de extractos bancarios"),
+combina cargo/abono en un único importe con signo si el banco los separa, y lanza
+`BankExcelFormatError` (→ HTTP 400 con mensaje claro) si no reconoce la estructura en vez de
+adivinar. `/api/analyze-excel` en `app.py` reescrito para usarlo — eliminada la asunción posicional
+fija (`base_cols`) que solo funcionaba por casualidad con el formato de Cajasur.
+
+Verificado contra los 6 extractos reales de `samples/`: Cajasur (`ejemplo_cajasur.xls`,
+`casa_julio_250626-180726.xls`), BBVA (`BBVA.xlsx`), EVO cuenta (`EVO_CC.xlsx`), EVO tarjeta
+(`EVO_tarjeta.xls`) y Sabadell (`sabadell.xls`) — cabecera y columnas detectadas correctamente en
+los 6, end-to-end a través de `/api/analyze-excel` (Flask test client). El caso cargo/abono
+separado solo se verificó con un test sintético — ningún banco de `samples/` lo usa realmente;
+si aparece uno real, confirmar que el signo resultante es el esperado.

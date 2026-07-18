@@ -49,25 +49,30 @@ backend/
   budget_engine.py    BudgetEngine: construye el árbol jerárquico presupuesto vs. gasto real
                        por categoría/subcategoría, y calcula flujos de caja (ingreso/gasto/
                        transferencias) ignorando transferencias en el cómputo de presupuesto.
+  bank_excel_parser.py Detección genérica de la estructura de un extracto bancario en Excel
+                       (parse_bank_excel()). Ver detalle en la sección "Parseo de extractos
+                       bancarios (multi-banco)" más abajo.
+  reconciliation_store.py Persistencia local de conciliaciones confirmadas. Ver "Persistencia de
+                       conciliaciones confirmadas" más abajo.
 
 app.py             Flask app. Sirve static/, y expone:
   /                        -> static/index.html
   /api/proxy/<endpoint>    -> proxy genérico GET/POST hacia http://<phone_ip>:<phone_port>/<endpoint>
                               (p.ej. /api/proxy/moneyBook/getDataByPeriod). Convierte XML a JSON,
                               limpia JSON no estándar del móvil (comillas sueltas, comas finales).
-  /api/analyze-excel       -> conciliación: recibe el Excel del banco, pide transacciones reales
-                              al móvil en la misma ventana de fechas, llama a match_bank_transactions.
-                              Cabecera detectada dinámicamente (detect_header_row: primera fila con
-                              "fecha" e "importe" entre sus celdas, en vez de un skiprows fijo — bancos
-                              distintos meten un número distinto de filas de metadatos antes de la
-                              tabla real). Importes normalizados con parse_spanish_amount() por si el
-                              banco exporta como texto con coma decimal ("1.234,56") en vez de float.
-                              Emite logs con prefijo "[analyze-excel]" (filas parseadas, rango de
-                              fechas, URL y rango consultado al móvil, éxito/excepción de esa llamada,
-                              muestra de transacciones recibidas, y resumen final de resultados por
-                              estado: exact_match/probable_match/suggested_match/new) — diagnóstico
-                              permanente para depurar por qué la conciliación no encuentra matches,
-                              sin necesidad de añadir logging ad-hoc cada vez.
+  /api/analyze-excel       -> conciliación: recibe el Excel del banco, lo parsea con
+                              backend/bank_excel_parser.py::parse_bank_excel() (ver sección
+                              dedicada más abajo), pide transacciones reales al móvil en la misma
+                              ventana de fechas, llama a match_bank_transactions. Si el Excel no
+                              tiene una estructura reconocible, responde 400 con un mensaje claro
+                              (BankExcelFormatError) en vez de adivinar. Emite logs con prefijo
+                              "[analyze-excel]" (fila/columnas de cabecera detectadas, filas
+                              parseadas, rango de fechas, URL y rango consultado al móvil,
+                              éxito/excepción de esa llamada, muestra de transacciones recibidas, y
+                              resumen final de resultados por estado: exact_match/probable_match/
+                              suggested_match/reconciled/new) — diagnóstico permanente (a consola Y
+                              a `logs/app.log`, ver "Logging de diagnóstico" más abajo) para depurar
+                              por qué la conciliación no encuentra matches.
   /api/budget-hierarchy    -> pide transacciones + resumen de presupuesto al móvil, llama a BudgetEngine
   /api/config              -> GET/POST de config.json (IP/puerto del móvil)
   /api/version             -> versión actual de la app (ver "Versionado")
@@ -199,6 +204,38 @@ construir el payload). Para transferencias se usa además `targetAssetId` (ID de
   que confirmes.
 
 `delete` espera `ids` con prefijo `:` — ejemplo: `ids=:<id_transaccion>`.
+
+## Parseo de extractos bancarios (multi-banco)
+
+`backend/bank_excel_parser.py::parse_bank_excel()` detecta la estructura de un Excel bancario sin
+asumir un banco concreto — verificado contra 6 extractos reales distintos en `samples/` (Cajasur,
+BBVA, EVO cuenta, EVO tarjeta, Sabadell). Diseño:
+
+- **Detección de la fila de cabecera**: escanea las primeras filas (hasta `max_scan=30`) buscando
+  una que contenga, en alguna de sus celdas, algo clasificable como fecha + concepto + (importe o
+  cargo+abono) — nunca una posición fija (`skiprows`), porque cada banco mete un número distinto
+  de filas de metadatos (nombre de cuenta, titular, periodo del informe...) antes de la tabla real.
+- **Clasificación de celdas por alias exacto, no por posición**: cada celda de la fila candidata se
+  normaliza (sin acentos, minúsculas, puntos/barras convertidos a espacio) y se compara por
+  **igualdad exacta** contra listas de alias por campo (`FIELD_ALIASES` en ese fichero) — p. ej.
+  `"F.Valor"` → `"f valor"` → campo `fecha_valor`; `"F. Operativa"` → `"f operativa"` → campo
+  `fecha`. Es igualdad exacta y no "contiene", a propósito: varios bancos tienen a la vez una
+  columna de fecha de operación y una de fecha valor (`"Fecha"` + `"Fecha valor"`, `"F. Operativa"`
+  + `"F. Valor"`, `"Fecha contable"` + `"Fecha valor"`) — con un simple `contains('fecha')` no se
+  pueden distinguir. `fecha_valor` se clasifica aparte explícitamente para ignorarla, no para
+  usarla como fecha de la operación.
+- **Cargo/abono en columnas separadas**: si el banco no tiene una columna `importe` única pero sí
+  `cargo`/`debe`/`salida` y `abono`/`haber`/`entrada`, se combinan en un único importe con signo
+  (`abono - abs(cargo)`). Ninguno de los 6 extractos de `samples/` usa este formato — cubierto con
+  un test sintético, no con datos reales; si aparece un banco real con este formato, verificar que
+  el signo resultante es el esperado.
+- **Fallo explícito, nunca una suposición silenciosa**: si ninguna fila candidata reúne fecha +
+  concepto + importe con confianza, `parse_bank_excel()` lanza `BankExcelFormatError`, y
+  `/api/analyze-excel` la traduce a `400` con el mensaje tal cual — mejor que el usuario vea "no
+  reconozco este Excel" a que la conciliación se ejecute silenciosamente sobre datos mal alineados.
+- **Para dar soporte a un banco nuevo que falle**: casi seguro que basta con añadir el alias que le
+  falta a `FIELD_ALIASES` (revisando qué texto normalizado tiene su cabecera real) — no hace falta
+  tocar la lógica de detección en sí.
 
 ## Convención de conciliación bancaria: nunca auto-conciliar
 

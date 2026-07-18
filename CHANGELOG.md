@@ -2,6 +2,24 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.3.0.9 - 2026-07-18
+
+Conciliación bancaria multi-banco: ya no asume el formato de Cajasur.
+
+- Nuevo `backend/bank_excel_parser.py`: detecta la fila de cabecera real y mapea columnas por
+  alias normalizado (fecha/concepto/importe/cargo/abono) en vez de por posición fija — distingue
+  fecha de operación de fecha valor cuando ambas existen. Combina cargo/abono en un único importe
+  con signo si el banco los separa en dos columnas.
+  - Si no reconoce la estructura del Excel, `analyze_excel()` responde `400` con un mensaje claro
+    (`BankExcelFormatError`) en vez de asumir algo silenciosamente incorrecto.
+- `app.py::analyze_excel()` reescrito para usar el nuevo parser — eliminados `detect_header_row()`
+  y el mapeo posicional fijo (`base_cols`) que solo funcionaba por casualidad para Cajasur.
+- Añadido `openpyxl` a `requirements.txt` (necesario para leer `.xlsx`, no solo `.xls`).
+- Verificado contra los 6 extractos reales de `samples/`: Cajasur (x2), BBVA, EVO cuenta, EVO
+  tarjeta y Sabadell — los 6 detectados correctamente end-to-end vía `/api/analyze-excel`. El caso
+  cargo/abono separado solo se probó con un test sintético (ningún banco de `samples/` lo usa).
+- `BACKLOG.md`: Propuesta #1 marcada como resuelta.
+
 ## 0.2.2.8 - 2026-07-18
 
 Nuevo `BACKLOG.md`: seguimiento centralizado de bugs pendientes y propuestas de mejora.
