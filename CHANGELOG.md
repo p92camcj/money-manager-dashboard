@@ -2,6 +2,20 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.1.3.4 - 2026-07-18
+
+Dos bugs reales en `backend/reconciliation.py` detectados al investigar por qué la conciliación
+no reconocía movimientos.
+
+- **Tolerancia de importes**: la comparación de importes usaba igualdad exacta de float
+  (`abs(a) == abs(b)`), lo que producía falsos negativos por precisión de punto flotante. Ahora
+  usa `np.isclose(..., atol=0.01)` (tolerancia de 1 céntimo).
+- **ID real de Money Manager en vez de posición de DataFrame**: `suggested_mm_ref` y
+  `candidates[].id` devolvían el índice posicional interno de pandas en vez del `id` (UUID) real
+  de la transacción, rompiendo silenciosamente "Ver Registro Asociado" y `confirmMatch` en el
+  frontend. `static/script.js` actualizado para tratar esos IDs como strings (UUID con guiones,
+  no enteros) en los `onclick`.
+
 ## 0.1.2.3 - 2026-07-18
 
 Estética del scrollbar acorde al glassmorphism.

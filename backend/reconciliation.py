@@ -1,5 +1,8 @@
+import numpy as np
 import pandas as pd
 from datetime import timedelta
+
+AMOUNT_TOLERANCE = 0.01  # margen de 1 céntimo para evitar falsos negativos por precisión de punto flotante
 
 def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, desc_col, window_days=3):
     """
@@ -32,7 +35,7 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
         # Filtro 1: Ventana de tiempo y mismo importe absoluto (considerando posibles inversiones de signo)
         time_mask = (mm_df['mbDate'] >= bank_date - timedelta(days=window_days)) & \
                     (mm_df['mbDate'] <= bank_date + timedelta(days=window_days))
-        amount_mask = (abs(mm_df['mbCash']) == abs(bank_amount))
+        amount_mask = np.isclose(mm_df['mbCash'].abs(), abs(bank_amount), atol=AMOUNT_TOLERANCE)
         unmatched_mask = (~mm_df['matched'])
         
         candidates = mm_df[time_mask & amount_mask & unmatched_mask]
@@ -49,13 +52,13 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
             if not exact_date.empty:
                 # Si las fechas coinciden exactamente, alta probabilidad
                 best_match = exact_date.iloc[0]
+                best_match_pos = exact_date.index[0]  # índice posicional en mm_df, solo para marcar 'matched'
                 status = 'exact_match'
                 match_confidence = 100
-                matched_mm_id = best_match.name
-                
+                matched_mm_id = best_match.get('id')  # id real de Money Manager (UUID), no la posición del DataFrame
+
                 # Marcar como emparejado para no reutilizar
-                if matched_mm_id is not None and not pd.isna(matched_mm_id):
-                    mm_df.at[matched_mm_id, 'matched'] = True
+                mm_df.at[best_match_pos, 'matched'] = True
             else:
                 # Comprobar similitud de texto si la fecha difiere
                 cands = candidates.copy()
@@ -73,7 +76,7 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
                         match_confidence = 80
                         
                     candidate_list.append({
-                        'id': int(idx_cand),
+                        'id': row_cand.get('id'),  # id real de Money Manager (UUID), no la posición del DataFrame
                         'date': row_cand['mbDate'].strftime('%Y-%m-%d') if pd.notnull(row_cand['mbDate']) else None,
                         'amount': float(row_cand['mbCash']) if not pd.isna(row_cand['mbCash']) else 0.0,
                         'description': str(row_cand['mbContent']),
@@ -87,7 +90,7 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
             'description': bank_desc,
             'status': status,
             'confidence': match_confidence,
-            'suggested_mm_ref': int(matched_mm_id) if matched_mm_id is not None and not pd.isna(matched_mm_id) else None,
+            'suggested_mm_ref': matched_mm_id if matched_mm_id is not None and not pd.isna(matched_mm_id) else None,
             'candidates': candidate_list
         })
         

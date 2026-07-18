@@ -760,13 +760,13 @@ async function handleFileUpload() {
             
             let candidatesHtml = '';
             if (p.status === 'exact_match') {
-                candidatesHtml = `<div style="margin-top:10px;"><button class="btn-secondary btn-sm" onclick="showTransaction(${p.suggested_mm_ref})">👁 Ver Registro Asociado</button></div>`;
+                candidatesHtml = `<div style="margin-top:10px;"><button class="btn-secondary btn-sm" onclick="showTransaction('${p.suggested_mm_ref}')">👁 Ver Registro Asociado</button></div>`;
             } else if (p.status === 'suggested_match' || p.status === 'probable_match') {
                 candidatesHtml = `<div style="margin-top:10px;"><strong>Posibles Asociados en MoneyManager:</strong><ul style="list-style:none; padding-left:0; margin-top:5px;">`;
                 (p.candidates || []).forEach(cand => {
                     candidatesHtml += `<li style="font-size:0.85rem; padding:5px; background:rgba(255,255,255,0.05); margin-bottom:5px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
                                        <div>${cand.date} | <strong>${formatCurrency(cand.amount)}</strong> | ${cand.description.substring(0,25)}... | <em>${cand.asset}</em></div>
-                                        <button class="btn-primary btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="confirmMatch('${p.source_id}', ${cand.id})">Confirmar Este</button>
+                                        <button class="btn-primary btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="confirmMatch('${p.source_id}', '${cand.id}')">Confirmar Este</button>
                                        </li>`;
                 });
                 candidatesHtml += `</ul></div>`;

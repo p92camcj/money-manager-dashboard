@@ -32,8 +32,14 @@ static/           Frontend estático servido directamente por Flask (sin build s
 backend/
   __init__.py
   reconciliation.py   match_bank_transactions(): matching banco↔Money Manager con pandas
-                       (ventana de días + importe exacto + heurística de texto). Ver
-                       "Convención de conciliación" más abajo — NUNCA escribe en el móvil.
+                       (ventana de días + importe con tolerancia de 1 céntimo + heurística de
+                       texto). Ver "Convención de conciliación" más abajo — NUNCA escribe en el
+                       móvil. `suggested_mm_ref` y `candidates[].id` son el `id` real (UUID) de
+                       la transacción en Money Manager, NUNCA el índice posicional del DataFrame
+                       interno — un bug detectado el 2026-07-18 usaba `best_match.name` /
+                       `idx_cand` (posición) en vez del campo `id`, lo que rompía silenciosamente
+                       "Ver Registro Asociado" y `confirmMatch` en el frontend. Si tocas esta
+                       función, no reintroduzcas esa confusión entre posición e id real.
   budget_engine.py    BudgetEngine: construye el árbol jerárquico presupuesto vs. gasto real
                        por categoría/subcategoría, y calcula flujos de caja (ingreso/gasto/
                        transferencias) ignorando transferencias en el cómputo de presupuesto.
