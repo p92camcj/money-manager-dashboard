@@ -50,7 +50,18 @@ app.py             Flask app. Sirve static/, y expone:
                               (p.ej. /api/proxy/moneyBook/getDataByPeriod). Convierte XML a JSON,
                               limpia JSON no estándar del móvil (comillas sueltas, comas finales).
   /api/analyze-excel       -> conciliación: recibe el Excel del banco, pide transacciones reales
-                              al móvil en la misma ventana de fechas, llama a match_bank_transactions
+                              al móvil en la misma ventana de fechas, llama a match_bank_transactions.
+                              Cabecera detectada dinámicamente (detect_header_row: primera fila con
+                              "fecha" e "importe" entre sus celdas, en vez de un skiprows fijo — bancos
+                              distintos meten un número distinto de filas de metadatos antes de la
+                              tabla real). Importes normalizados con parse_spanish_amount() por si el
+                              banco exporta como texto con coma decimal ("1.234,56") en vez de float.
+                              Emite logs con prefijo "[analyze-excel]" (filas parseadas, rango de
+                              fechas, URL y rango consultado al móvil, éxito/excepción de esa llamada,
+                              muestra de transacciones recibidas, y resumen final de resultados por
+                              estado: exact_match/probable_match/suggested_match/new) — diagnóstico
+                              permanente para depurar por qué la conciliación no encuentra matches,
+                              sin necesidad de añadir logging ad-hoc cada vez.
   /api/budget-hierarchy    -> pide transacciones + resumen de presupuesto al móvil, llama a BudgetEngine
   /api/config              -> GET/POST de config.json (IP/puerto del móvil)
   /api/version             -> versión actual de la app (ver "Versionado")
@@ -66,6 +77,23 @@ samples/            Ficheros de ejemplo para pruebas locales. NO están versiona
 
 El frontend nunca llama directamente a la IP del móvil: siempre pasa por `/api/proxy/...` en
 Flask, que es quien conoce la IP/puerto (ver siguiente sección).
+
+**Layout de `static/index.html` / `style.css`:** `body` usa `display:flex; flex-direction:column;
+justify-content:center; align-items:center` para centrar `.glass-container` (el panel principal) y
+apilar el `<footer class="app-footer">` justo debajo, centrado. Si se cambia `flex-direction` de
+`body` a `row` (o se quita), el footer deja de aparecer debajo del panel y pasa a colocarse al lado
+como si fuera parte del layout lateral — cuidado al tocar el layout raíz.
+
+**Cache-busting de `static/`:** `index.html` referencia `style.css?v=N` y `script.js?v=N`. Sube ese
+número cada vez que edites esos ficheros — si no, el navegador puede seguir sirviendo la versión
+cacheada y un fix que funciona en el backend puede parecer que "no hace nada" en el frontend.
+
+**stdout con buffering por bloques:** cuando Flask se lanza vía `launch.py` (no interactivo, sin
+consola "real" detectada por Python) en vez de `python app.py` en una terminal, `sys.stdout` puede
+quedar en modo block-buffered en vez de line-buffered — los `print()` de diagnóstico quedan
+retenidos en el buffer y, con un servidor de larga duración, nunca llegan a mostrarse. `app.py` y
+`launch.py` fuerzan `sys.stdout.reconfigure(line_buffering=True)` al arrancar para evitarlo de
+forma permanente. Si añades logging en otro entrypoint, aplica el mismo fix ahí.
 
 ## Configuración: `config.json`
 

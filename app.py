@@ -1,6 +1,8 @@
+import io
 import re
 import json
 import os
+from collections import Counter
 import requests
 import pandas as pd
 import xml.etree.ElementTree as ET
@@ -10,6 +12,16 @@ from flask_cors import CORS
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# Fuerza stdout a line-buffering: cuando el proceso no está atado a una consola
+# interactiva "de verdad" (p.ej. lanzado desde launch.py/launch.bat en vez de
+# `python app.py` en una terminal), Python usa buffering por bloques y los
+# print() de diagnóstico ([analyze-excel], Proxying...) pueden quedar retenidos
+# en el buffer sin mostrarse hasta que el proceso termina. Con un servidor Flask
+# de larga duración eso equivale a "nunca se ven". Esto lo evita de forma
+# permanente sin depender de recordar usar flush=True en cada print().
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(line_buffering=True)
 
 from backend.reconciliation import match_bank_transactions
 from backend.budget_engine import BudgetEngine
@@ -151,19 +163,64 @@ def proxy(endpoint):
         print(f"Proxy Error: {e}")
         return jsonify({"error": str(e), "demo_mode": True}), 503
 
+def detect_header_row(raw_df, max_scan=30):
+    """Busca la primera fila que contenga 'fecha' e 'importe' entre sus celdas.
+
+    Los extractos bancarios traen un número variable de filas de metadatos
+    (nombre de cuenta, titular, periodo...) antes de la cabecera real, y ese
+    número cambia según el banco. Devuelve el índice de la fila de cabecera,
+    o None si no se encuentra en las primeras `max_scan` filas.
+    """
+    for idx in range(min(max_scan, len(raw_df))):
+        row_values = raw_df.iloc[idx].astype(str).str.lower()
+        has_fecha = row_values.str.contains('fecha').any()
+        has_importe = row_values.str.contains('importe').any()
+        if has_fecha and has_importe:
+            return idx
+    return None
+
+
+def parse_spanish_amount(val):
+    """Normaliza importes que pueden venir como texto con formato español
+    (punto de miles, coma decimal, p.ej. '1.234,56') en vez de float nativo."""
+    if pd.isna(val):
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = re.sub(r'[€$\s]', '', str(val).strip())
+    if ',' in s and '.' in s:
+        s = s.replace('.', '').replace(',', '.')
+    elif ',' in s:
+        s = s.replace(',', '.')
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
 @app.route('/api/analyze-excel', methods=['POST'])
 def analyze_excel():
     if 'file' not in request.files:
         return jsonify({"error": "No hay archivo"}), 400
-    
+
     file = request.files['file']
     account_name = request.form.get('accountName', 'CASA')
     window_days = int(request.form.get('windowDays', 3))
-    
+    file_bytes = file.read()
+
     try:
-        # Importar datos del excel (ejemplo adaptado genérico, en el original empezaba en f.10)
-        df = pd.read_excel(file, header=None, skiprows=10)
-        
+        # Detección dinámica de la fila de cabecera (varía según el banco)
+        raw_df = pd.read_excel(io.BytesIO(file_bytes), header=None)
+        header_row_idx = detect_header_row(raw_df)
+        if header_row_idx is None:
+            print("[analyze-excel] No se detectó fila de cabecera con 'fecha'/'importe'; usando fallback skiprows=10")
+            skiprows = 10
+        else:
+            skiprows = header_row_idx + 1
+            print(f"[analyze-excel] Cabecera detectada en fila {header_row_idx} (0-indexada); saltando {skiprows} filas")
+
+        df = pd.read_excel(io.BytesIO(file_bytes), header=None, skiprows=skiprows)
+
         # Asignar nombres dinámicamente según la cantidad de columnas del excel bancario
         num_cols = len(df.columns)
         base_cols = ['Fecha', 'Concepto', 'Info', 'Importe', 'Total', 'Nada']
@@ -171,23 +228,37 @@ def analyze_excel():
             df.columns = base_cols[:num_cols]
         else:
             df.columns = base_cols + [f'C{i}' for i in range(len(base_cols), num_cols)]
-        
+
+        # Formato español: punto de miles / coma decimal en importes exportados como texto
+        df['Importe'] = df['Importe'].apply(parse_spanish_amount)
+
+        parsed_dates = pd.to_datetime(df['Fecha'], errors='coerce', dayfirst=True)
+        valid_rows = parsed_dates.notna() & df['Importe'].notna()
+        print(f"[analyze-excel] Filas totales en Excel: {len(df)} | Filas con fecha+importe válidos: {valid_rows.sum()}")
+        if valid_rows.any():
+            print(f"[analyze-excel] Rango de fechas del Excel: {parsed_dates[valid_rows].min().date()} -> {parsed_dates[valid_rows].max().date()}")
+
         phone_url = get_phone_url()
+        min_date = parsed_dates.min()
+        max_date = parsed_dates.max()
+
+        if pd.isna(min_date) or pd.isna(max_date):
+            start_str, end_str = "2026-03-01", "2026-03-31"
+        else:
+            start_str = (min_date - pd.Timedelta(days=15)).strftime('%Y-%m-%d')
+            end_str = (max_date + pd.Timedelta(days=15)).strftime('%Y-%m-%d')
+
+        mm_url = f"{phone_url}/moneyBook/getDataByPeriod?startDate={start_str}&endDate={end_str}"
+        print(f"[analyze-excel] Consultando Money Manager: {mm_url}")
         try:
-            # Parsear las fechas considerando formato español (DD/MM/YYYY) para no confundir meses y días
-            temp_dates = pd.to_datetime(df['Fecha'], errors='coerce', dayfirst=True)
-            min_date = temp_dates.min()
-            max_date = temp_dates.max()
-            
-            if pd.isna(min_date) or pd.isna(max_date):
-                start_str, end_str = "2026-03-01", "2026-03-31"
-            else:
-                start_str = (min_date - pd.Timedelta(days=15)).strftime('%Y-%m-%d')
-                end_str = (max_date + pd.Timedelta(days=15)).strftime('%Y-%m-%d')
-                
-            resp = requests.get(f"{phone_url}/moneyBook/getDataByPeriod?startDate={start_str}&endDate={end_str}", timeout=10)
+            resp = requests.get(mm_url, timeout=10)
+            resp.raise_for_status()
             real_transactions = xml_to_dict(resp.content)
-        except:
+            print(f"[analyze-excel] Money Manager respondió {resp.status_code} | {len(real_transactions)} transacciones recibidas")
+            for sample in real_transactions[:3]:
+                print(f"[analyze-excel]   muestra: { {k: sample.get(k) for k in ('mbDate', 'mbCash', 'mbContent', 'inOutType', 'assetId')} }")
+        except Exception as e:
+            print(f"[analyze-excel] ERROR consultando Money Manager en {mm_url}: {e}")
             real_transactions = []
 
         # Usar el nuevo motor de reconciliación basado en Pandas
@@ -200,9 +271,13 @@ def analyze_excel():
             desc_col='Concepto',
             window_days=window_days
         )
-            
+
+        status_counts = Counter(p['status'] for p in proposals)
+        print(f"[analyze-excel] Resultado de conciliación ({len(proposals)} filas): {dict(status_counts)}")
+
         return jsonify(clean_nans(proposals))
     except Exception as e:
+        print(f"[analyze-excel] ERROR inesperado: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/budget-hierarchy', methods=['GET'])

@@ -2,6 +2,23 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.1.4.5 - 2026-07-18
+
+Investigaciones de diagnóstico de la conciliación: logging no visible y "Ver Registro Asociado"
+sin efecto.
+
+- **stdout con buffering por bloques**: confirmado que el proyecto no usa `app.logger` en
+  ningún sitio (descartada la hipótesis de nivel WARNING en modo no-debug); el problema real es
+  que `sys.stdout` puede quedar en block-buffering cuando Flask se lanza vía `launch.py` en vez
+  de una terminal interactiva, reteniendo los `print()` de diagnóstico indefinidamente en un
+  servidor de larga duración. `app.py` y `launch.py` fuerzan ahora
+  `sys.stdout.reconfigure(line_buffering=True)` al arrancar.
+- **Cache-busting**: subido `style.css?v=8→9` y `script.js?v=8→9` en `index.html` para que el
+  navegador no sirva versiones cacheadas de los fixes de la conciliación de este mismo día.
+- Cierra también el bug de `skiprows` hardcodeado en `/api/analyze-excel` (sustituido por
+  detección dinámica de cabecera) y el parseo robusto de importes con coma decimal española,
+  ya verificados con datos reales en una sesión anterior pero pendientes de commit hasta ahora.
+
 ## 0.1.3.4 - 2026-07-18
 
 Dos bugs reales en `backend/reconciliation.py` detectados al investigar por qué la conciliación
