@@ -140,16 +140,28 @@ antes de asumir que el código no se ejecutó.
 ## Configuración: `config.json`
 
 ```json
-{"phone_ip": "192.168.5.248:8888", "phone_port": "8888"}
+{"phone_ip": "192.168.1.100:8888", "phone_port": "8888"}
 ```
 
 - Vive en la raíz, se lee/escribe con `get_config()` / `save_config()` en `app.py`.
 - Editable desde la UI (tab Ajustes) vía `GET/POST /api/config`.
-- **Nunca hardcodear la IP del móvil en código.** Todo acceso al móvil pasa por `get_phone_url()`,
-  que lee `config.json`. Si necesitas la URL del móvil en un sitio nuevo, reutiliza esa función.
-- Este fichero sí está versionado en git (solo contiene una IP local de LAN, no es sensible). Si
-  algún día `config.json` empieza a guardar algo más sensible, hay que revisar si debe seguir
-  versionado.
+- **Nunca hardcodear la IP real de ningún usuario en código.** Todo acceso al móvil pasa por
+  `get_phone_url()`, que lee `config.json`. Si necesitas la URL del móvil en un sitio nuevo,
+  reutiliza esa función. El único valor de IP que vive en el código es el placeholder genérico
+  `DEFAULT_CONFIG` en `app.py` (`192.168.1.100:8888`, replicado en `launch.py` y
+  `config.example.json`) — nunca la IP real de nadie.
+- **NO está versionado en git** (`.gitignore`) — cada usuario tiene su propia IP de LAN, y desde
+  que el repo es público (Propuesta #2 en `BACKLOG.md`, resuelta 2026-07-18) no tiene sentido que
+  se comparta entre clones. `config.example.json` es la plantilla versionada, con el mismo
+  placeholder que `DEFAULT_CONFIG`. Si `config.json` no existe al arrancar (primer uso, o se
+  borró), `get_config()` lo crea automáticamente con `DEFAULT_CONFIG` — el usuario lo sobreescribe
+  desde la pestaña Ajustes en su primer arranque, no hace falta crearlo a mano.
+  - **Nota histórica**: antes de esto, `config.json` sí estuvo versionado desde el primer commit
+    del repo (con la IP real del autor) — se sacó del tracking con `git rm --cached` sin reescribir
+    el historial (decisión tomada tras auditar todo el historial de git en busca de datos
+    sensibles antes de hacer público el repo; el único hallazgo fue esa IP, considerada de bajo
+    riesgo por ser de LAN — ver `BACKLOG.md`, Propuesta #2 resuelta, para el detalle completo de
+    la auditoría).
 
 ## La API real del móvil (PC Manager) — referencia estable
 
@@ -426,8 +438,10 @@ pip install -r requirements.txt
 python app.py            # arranca Flask en http://localhost:5000, debug=True
 ```
 
-O usando el lanzador de doble clic (ver `launch.py`, `launch.bat`, `launch.command`): comprueba
-conexión con el móvil antes de arrancar Flask y abre el navegador automáticamente.
+O usando el lanzador de doble clic (ver `launch.py`, `launch.bat`, `launch.command`): antes de
+arrancar Flask, comprueba actualizaciones del repositorio (`check_for_updates()` — `git fetch` +
+`git pull --ff-only` si el remoto tiene commits nuevos, nunca bloquea el arranque si falla o hay
+cambios locales) y la conexión con el móvil, y abre el navegador automáticamente.
 
 ### Scripts de prueba contra el móvil
 

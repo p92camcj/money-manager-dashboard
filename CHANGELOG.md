@@ -2,6 +2,37 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.7.0.17 - 2026-07-18
+
+Preparación del proyecto para distribución pública (Propuesta #2): repo público, config.json
+fuera de git, y auto-actualización en el lanzador.
+
+- **Auditoría de seguridad del historial completo de git** antes de cambiar la visibilidad:
+  único hallazgo, la IP de WiFi local (`192.168.5.248:8888`) en `config.json`, presente desde el
+  primer commit del repo. Sin rastro de `samples/`, `data/`, `.env`, tokens ni credenciales en
+  ningún commit del historial. Decisión (con el usuario): no reescribir el historial —
+  es una IP de LAN no accesible desde fuera de la propia WiFi, no un secreto real — y en su lugar
+  dejar de rastrear `config.json` a partir de ahora (ver siguiente punto).
+- **Repositorio de GitHub cambiado a público** (`p92camcj/money-manager-dashboard`), tras
+  completar la auditoría.
+- **`config.json` fuera del control de versiones**: añadido a `.gitignore`, `git rm --cached`
+  (el fichero local no se toca), nuevo `config.example.json` como plantilla. `get_config()` en
+  `app.py` crea `config.json` automáticamente en el primer arranque con un valor de ejemplo
+  genérico (`192.168.1.100:8888`, ya no la IP real del autor) si no existe, para que un usuario
+  nuevo no tenga que crearlo a mano antes de configurar su IP real desde la pestaña Ajustes.
+  `launch.py` usa el mismo placeholder genérico.
+- **Auto-actualización en `launch.py`**: antes de arrancar Flask, comprueba si hay commits
+  nuevos en el remoto (`git fetch` + comparación con `@{u}`) y los descarga (`git pull
+  --ff-only`) si los hay. Nunca bloquea el arranque: sin conexión, sin remoto configurado, o
+  cambios locales que impidan un fast-forward limpio, avisa por consola y arranca igual con la
+  versión local. Al actualizar, informa de la versión anterior y la nueva y muestra el bloque
+  correspondiente de `CHANGELOG.md`. Verificado con un sandbox git aislado cubriendo los 5 casos
+  (actualización real, ya al día, conflicto local, remoto inalcanzable, carpeta sin git).
+- **`README.md`** reescrito con una sección de instalación completa para alguien sin contexto
+  previo del proyecto (clonar, venv, requirements, primer arranque, configurar IP desde Ajustes,
+  cómo funciona la auto-actualización en el uso diario).
+- `BACKLOG.md`: Propuesta #2 marcada como resuelta.
+
 ## 0.6.0.12 - 2026-07-18
 
 Conciliación bancaria: cuenta asociada por fichero y matching de transferencias entre bancos

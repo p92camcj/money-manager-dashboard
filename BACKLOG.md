@@ -84,31 +84,50 @@ Money Manager y las resuelve como `exact_match`/`probable_match` en vez de "nuev
 movimiento duplicado entre ficheros que no sea una transferencia con cuentas asociadas), la
 limitación original persiste tal cual estaba documentada.
 
+---
+
+## Resueltos
+
 ### Propuesta #2: distribución a amigos con un clic y auto-actualización
 
-- **Estado:** EN PROGRESO.
+- **Resuelto:** 2026-07-18, versión `0.7.0.17`. Commits: `3a97788` (marcado en progreso),
+  `d7eb8f6` (Bloque 1: config.json fuera de VCS), `9b255df` (Bloque 2: auto-actualización en
+  launch.py), `975a588` (Bloque 3: README.md).
 - **Anotado:** 2026-07-18.
 
 Idea: que otros usuarios de Money Manager puedan ejecutar este dashboard en su propio PC/WiFi/
 móvil (misma arquitectura de siempre — cada uno con su propia instancia local, no un servicio
 centralizado), pero reciban las mejoras del proyecto sin tener que reinstalar nada a mano.
 
-Enfoque propuesto: el lanzador (`launch.py`) hace un `git pull` (o equivalente) contra el repo
-antes de arrancar Flask cada vez.
+**Auditoría de seguridad del historial completo de git, antes de tocar la visibilidad**: único
+hallazgo, la IP de WiFi local (`192.168.5.248:8888`) en `config.json`, presente desde el primer
+commit del repo (`3502ecf`) y ya subida al remoto (repo privado en ese momento). Sin rastro de
+`samples/`, `data/`, `.env`, tokens ni credenciales en ningún commit de todo el historial (se
+listaron todos los ficheros que han existido alguna vez con `git log --all --diff-filter=A`, y se
+buscaron patrones de IP/secreto en todos los diffs). Decisión tomada con el usuario: no reescribir
+el historial con `git filter-repo` — es una IP de LAN no accesible desde fuera de la propia WiFi,
+riesgo bajo — y en su lugar dejar de rastrear `config.json` a partir de ahora. Repo cambiado a
+público en GitHub tras esta auditoría.
 
-Prerrequisitos identificados antes de poder implementarlo:
-- Sacar `config.json` del control de versiones (dejar solo una plantilla
-  `config.example.json`), para que un `git pull` no pise la IP/puerto personal de cada usuario.
-  Esto cambia la decisión actual documentada en `CLAUDE.md` (`config.json` versionado por
-  considerarse no sensible) — revisar esa sección si se implementa.
-- Decidir si el repo pasa a público, o si se gestiona con colaboradores privados en GitHub
-  (actualmente es privado, un solo usuario).
-- Definir qué pasa si el `git pull` falla (sin conexión a internet, conflictos locales) — el
-  lanzador no debería bloquear el arranque de la app por esto.
+**Bloque 1 — config.json fuera de VCS**: añadido a `.gitignore`, `git rm --cached` (el fichero
+local del usuario no se toca), nuevo `config.example.json` como plantilla. `get_config()` en
+`app.py` crea `config.json` automáticamente en el primer arranque con un valor de ejemplo
+genérico (`192.168.1.100:8888`, ya no la IP real del autor, que también se sustituyó como
+fallback hardcodeado en `app.py`/`launch.py`) si no existe.
 
----
+**Bloque 2 — auto-actualización en `launch.py`**: antes de arrancar Flask, `git fetch` +
+comparación con el remoto de seguimiento (`@{u}`), y `git pull --ff-only` si hay commits nuevos.
+Nunca bloquea el arranque — sin conexión, sin remoto configurado, o cambios locales que impidan
+un fast-forward limpio, avisa por consola y arranca igual con la versión local (nunca fuerza el
+pull). Al actualizar con éxito, informa de versión anterior → nueva (`VERSION`) y muestra el
+bloque correspondiente de `CHANGELOG.md`. Verificado con un sandbox git aislado (no el repo
+real): actualización real disponible, ya al día, conflicto por cambios locales, remoto
+inalcanzable, y carpeta sin git — los 5 casos se comportan como se espera.
 
-## Resueltos
+**Bloque 3 — `README.md`**: sección de instalación reescrita para alguien sin contexto previo del
+proyecto — clonar, venv, requirements, requisitos (Python + Git), primer arranque (config.json se
+crea solo, configurar IP real desde Ajustes), y cómo funciona la auto-actualización en el uso
+diario.
 
 ### Propuesta #5: cuenta asociada por fichero y matching de transferencias entre bancos
 
