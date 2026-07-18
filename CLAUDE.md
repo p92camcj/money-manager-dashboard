@@ -271,6 +271,14 @@ y se muestra en el footer del frontend.
 Cada tarea cerrada con cambios de código añade una entrada a `CHANGELOG.md` con versión, fecha y
 qué cambió, y su propio commit (no se amontonan varias tareas en un commit).
 
+## Seguimiento de bugs y propuestas: `BACKLOG.md`
+
+Los bugs detectados que no se arreglan en el momento, y las propuestas de mejora que surgen en
+conversación, se anotan en `BACKLOG.md` (raíz del repo) — no deben quedar solo en el historial de
+chat. Al resolver algo de ahí, se marca como resuelto (fecha + commit) en el mismo commit que lo
+cierra, nunca se borra sin más. Revisa ese fichero al empezar una sesión nueva para tener contexto
+de qué queda pendiente.
+
 ## Comandos
 
 ### Entorno

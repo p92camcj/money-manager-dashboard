@@ -2,6 +2,19 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.2.2.8 - 2026-07-18
+
+Nuevo `BACKLOG.md`: seguimiento centralizado de bugs pendientes y propuestas de mejora.
+
+- Se buscó a fondo (historial completo de git, árbol de trabajo con ficheros gitignorados,
+  carpeta `Documents/GitHub`) un `.md` de propuestas anteriores que se creía existente; no se
+  encontró ninguno — el documento se crea desde cero.
+- Recoge Bug #1 (fallo de conexión con el móvil tratado como "cero transacciones" válidas), Bug #2
+  (categoría/subcategoría no se guardan al crear desde "Pre-rellenar y Añadir"), Propuesta #1
+  (generalizar parseo de Excel a otros bancos) y Propuesta #2 (distribución a amigos con
+  auto-actualización vía `git pull`) — ninguno implementado en este commit, solo documentado.
+- `CLAUDE.md` referencia el nuevo fichero para que quede visible al empezar sesiones futuras.
+
 ## 0.2.1.7 - 2026-07-18
 
 Logging a fichero (causa real de que no se viera nada en terminal) y fix de "Ver Registro Asociado".
