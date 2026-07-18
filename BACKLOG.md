@@ -60,26 +60,21 @@ espera realmente el servidor PC Manager. Pendiente de instrumentar (log del payl
 
 ## Propuestas de mejora pendientes
 
-### Propuesta #3: soporte CSV y subida múltiple con etiqueta por fichero
+### Propuesta #4: matching no comparte estado entre ficheros de la misma tanda
 
-- **Estado:** en progreso desde 2026-07-18.
-- **Anotado:** 2026-07-18.
+- **Estado:** identificado, no resuelto — a propósito, fuera de alcance de la Propuesta #3.
+- **Detectado:** 2026-07-18, durante la implementación de subida múltiple (Propuesta #3).
 
-Dos ampliaciones a la conciliación bancaria:
-- Soporte para extractos en CSV (empezando por Revolut, `samples/revolut.csv`), reutilizando la
-  misma tubería de detección de cabecera + mapeo de columnas por alias de
-  `backend/bank_excel_parser.py` (Propuesta #1) — solo cambia cómo se lee el fichero en bruto
-  según la extensión, no la lógica de detección.
-- Subida de varios ficheros a la vez (Excel y/o CSV mezclados), cada uno con una etiqueta de
-  origen editable (p. ej. "Revolut", "Cuenta Sabadell") para poder ver movimientos de varias
-  cuentas/bancos a la vez pero distinguidos. Un solo `getDataByPeriod` con el rango combinado de
-  todos los ficheros de la tanda, en vez de una llamada al móvil por fichero.
-
-Caso borde identificado por el usuario, no resuelto en esta propuesta: si el mismo movimiento
-aparece en dos ficheros distintos a la vez (p. ej. una transferencia entre dos cuentas propias,
-visible en ambos extractos), cada fichero se concilia contra Money Manager por separado sin saber
-del otro — posible duplicado de "nuevo movimiento" entre ficheros. Pendiente de decidir si merece
-la pena resolverlo y cómo.
+Al subir varios ficheros a la vez, cada uno se concilia contra Money Manager por separado
+(`match_bank_transactions()` se llama una vez por fichero, cada una con su propio estado interno de
+"ya emparejado"). Si el mismo movimiento real aparece en dos ficheros distintos a la vez — p. ej.
+una transferencia entre dos cuentas propias del usuario, visible tanto en el extracto del banco
+origen como en el del banco destino — cada fichero podría proponerlo como "nuevo movimiento" sin
+saber que el otro fichero ya lo vio. No observado con datos reales todavía (ningún par de ficheros
+de `samples/` comparte un movimiento real), pero es una consecuencia estructural del diseño actual,
+no una hipótesis. Pendiente de decidir si merece la pena resolverlo (y cómo — ¿deduplicar entre
+ficheros de la misma tanda antes de conciliar contra Money Manager?) o si el usuario prefiere
+revisarlo manualmente cuando pase.
 
 ### Propuesta #2: distribución a amigos con un clic y auto-actualización
 
@@ -106,6 +101,35 @@ Prerrequisitos identificados antes de poder implementarlo:
 ---
 
 ## Resueltos
+
+### Propuesta #3: soporte CSV y subida múltiple con etiqueta por fichero
+
+- **Resuelto:** 2026-07-18, versión `0.5.0.11` (Bloque 1: `5edaafe`, versión `0.4.0.10`; Bloque 2:
+  este mismo commit).
+- **Anotado:** 2026-07-18.
+
+**Bloque 1 — CSV**: `backend/bank_excel_parser.py` renombrado a `bank_statement_parser.py`
+(`parse_bank_statement()`), reutilizando la misma detección de cabecera + mapeo de columnas por
+alias que Excel — solo cambia `_read_raw()` según la extensión. CSV leído con `csv.reader` (no
+`pandas.read_csv` directo, que no tolera filas de metadatos más cortas que la cabecera). Delimitador
+vía `csv.Sniffer`, encoding probado `utf-8-sig` → `cp1252` → `latin-1`. Verificado contra
+`samples/revolut.csv` real (3/3 filas).
+
+**Bloque 2 — subida múltiple con etiqueta**: `/api/analyze-excel` acepta `files`+`labels` (mismo
+orden, etiqueta vacía → nombre de fichero), calcula el rango de fechas combinado de todos los
+ficheros para una única llamada a `getDataByPeriod`, y hace matching independiente por fichero
+(ver Propuesta #4 — limitación conocida y aceptada). Respuesta cambiada de array plano a
+`{"proposals": [...], "file_errors": [...]}` — si un fichero individual falla, no aborta la tanda
+entera. Frontend: selección múltiple con lista previa de etiquetas editables (`#fileLabelsList`),
+badge de etiqueta de origen en cada propuesta, filtro por etiqueta (`#proposalsFilterBar`).
+Verificado en navegador real (Playwright) con 3 ficheros mezclados (Cajasur Excel + Revolut CSV +
+BBVA Excel): 93 propuestas, etiquetas y filtro correctos.
+
+**Bug real encontrado durante las pruebas de este bloque, corregido en el mismo commit**:
+`pd.to_datetime(..., dayfirst=True)` interpreta mal fechas ISO en pandas 3.0.3 —
+`'2026-07-08'` se convertía en 7 de agosto. Nueva función compartida `parse_bank_date()` en
+`backend/bank_statement_parser.py` (ISO8601 primero, `dayfirst=True` como fallback), usada en
+`reconciliation.py` y `app.py`. Ver detalle en `CLAUDE.md`, sección "Parseo de extractos bancarios".
 
 ### Propuesta #1: generalizar el parseo de Excel para distintos bancos
 

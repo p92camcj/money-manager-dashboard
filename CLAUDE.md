@@ -60,19 +60,34 @@ app.py             Flask app. Sirve static/, y expone:
   /api/proxy/<endpoint>    -> proxy genérico GET/POST hacia http://<phone_ip>:<phone_port>/<endpoint>
                               (p.ej. /api/proxy/moneyBook/getDataByPeriod). Convierte XML a JSON,
                               limpia JSON no estándar del móvil (comillas sueltas, comas finales).
-  /api/analyze-excel       -> conciliación: recibe UN extracto bancario (Excel o CSV; el nombre
-                              del endpoint es historia, no una limitación — ver más abajo), lo
-                              parsea con backend/bank_statement_parser.py::parse_bank_statement()
-                              (ver sección dedicada), pide transacciones reales al móvil en la
-                              misma ventana de fechas, llama a match_bank_transactions. Si el
-                              fichero no tiene una estructura reconocible, responde 400 con un
-                              mensaje claro (BankStatementFormatError) en vez de adivinar. Emite logs con prefijo
-                              "[analyze-excel]" (fila/columnas de cabecera detectadas, filas
-                              parseadas, rango de fechas, URL y rango consultado al móvil,
-                              éxito/excepción de esa llamada, muestra de transacciones recibidas, y
-                              resumen final de resultados por estado: exact_match/probable_match/
-                              suggested_match/reconciled/new) — diagnóstico permanente (a consola Y
-                              a `logs/app.log`, ver "Logging de diagnóstico" más abajo) para depurar
+  /api/analyze-excel       -> conciliación: recibe UNO O VARIOS extractos bancarios a la vez
+                              (Excel y/o CSV mezclados; el nombre del endpoint es historia, no
+                              una limitación). Campos del form-data: `files` (uno o más ficheros)
+                              y `labels` (una etiqueta por fichero, MISMO orden que `files` —
+                              si una etiqueta viene vacía, se usa el nombre de fichero). Cada
+                              fichero se parsea con
+                              backend/bank_statement_parser.py::parse_bank_statement() (ver
+                              sección dedicada). Se calcula el rango de fechas COMBINADO de
+                              todos los ficheros de la tanda y se hace una única llamada a
+                              `getDataByPeriod` — no una por fichero. El matching
+                              (`match_bank_transactions`) se hace por SEPARADO para cada fichero
+                              contra ese mismo conjunto de transacciones del móvil: dos ficheros
+                              no se enteran el uno del otro (limitación conocida, ver
+                              `BACKLOG.md` — un movimiento que aparezca en dos extractos a la vez,
+                              p.ej. una transferencia entre cuentas propias, puede proponerse como
+                              "nuevo" en ambos). Cada propuesta lleva `source_label` y
+                              `source_filename`, y `source_id` va prefijado por índice de fichero
+                              (`f0_...`, `f1_...`) para que sea único entre ficheros de la misma
+                              tanda. Si un fichero individual no tiene estructura reconocible, no
+                              aborta toda la tanda: se reporta en `file_errors` y se sigue con el
+                              resto. Respuesta: `{"proposals": [...], "file_errors": [...]}` (no
+                              un array plano). Emite logs con prefijo "[analyze-excel]" (fila/
+                              columnas de cabecera detectadas por fichero, filas parseadas, rango
+                              de fechas combinado, URL y rango consultado al móvil, éxito/excepción
+                              de esa llamada, muestra de transacciones recibidas, y resumen final
+                              de resultados por estado: exact_match/probable_match/suggested_match/
+                              reconciled/new) — diagnóstico permanente (a consola Y a
+                              `logs/app.log`, ver "Logging de diagnóstico" más abajo) para depurar
                               por qué la conciliación no encuentra matches.
   /api/budget-hierarchy    -> pide transacciones + resumen de presupuesto al móvil, llama a BudgetEngine
   /api/config              -> GET/POST de config.json (IP/puerto del móvil)
@@ -230,7 +245,7 @@ fichero en bruto a un DataFrame — no hay dos caminos de lógica separados para
   usarla como fecha de la operación.
 - **Cargo/abono en columnas separadas**: si el banco no tiene una columna `importe` única pero sí
   `cargo`/`debe`/`salida` y `abono`/`haber`/`entrada`, se combinan en un único importe con signo
-  (`abono - abs(cargo)`). Ninguno de los 6 extractos de `samples/` usa este formato — cubierto con
+  (`abono - abs(cargo)`). Ninguno de los extractos reales de `samples/` usa este formato — cubierto con
   un test sintético, no con datos reales; si aparece un banco real con este formato, verificar que
   el signo resultante es el esperado.
 - **Fallo explícito, nunca una suposición silenciosa**: si ninguna fila candidata reúne fecha +
@@ -247,6 +262,15 @@ fichero en bruto a un DataFrame — no hay dos caminos de lógica separados para
 - **Para dar soporte a un banco nuevo que falle**: casi seguro que basta con añadir el alias que le
   falta a `FIELD_ALIASES` (revisando qué texto normalizado tiene su cabecera real) — no hace falta
   tocar la lógica de detección en sí.
+- **Fechas — usa siempre `parse_bank_date()`, nunca `pd.to_datetime(..., dayfirst=True)` a
+  pelo**: confirmado en pandas 3.0.3 que `dayfirst=True` interpreta MAL fechas ISO
+  (`YYYY-MM-DD[ HH:MM:SS]`, formato de Revolut) — `'2026-07-08'` se convierte en 7 de agosto en
+  vez de 8 de julio, **incluso sin ambigüedad real** en el string. `parse_bank_date()` prueba
+  primero `format='ISO8601'` (que rechaza con `NaT` cualquier cosa que no sea `YYYY-MM-DD`, así
+  que nunca puede confundir un `DD/MM/YYYY` español) y usa `dayfirst=True` solo como fallback para
+  lo que ISO8601 no reconoce. Se usa tanto en `reconciliation.py` (fecha del banco para el
+  matching) como en `app.py` (rango de fechas a consultar al móvil) — si añades un tercer sitio
+  que parsee fechas de un extracto bancario, usa esta función, no `pd.to_datetime` directo.
 
 ## Convención de conciliación bancaria: nunca auto-conciliar
 

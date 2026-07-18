@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from datetime import timedelta
 
+from backend.bank_statement_parser import parse_bank_date
+
 AMOUNT_TOLERANCE = 0.01  # margen de 1 céntimo para evitar falsos negativos por precisión de punto flotante
 
 def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, desc_col, window_days=3):
@@ -19,7 +21,7 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
         mm_df['mbCash'] = pd.to_numeric(mm_df['mbCash'], errors='coerce').fillna(0)
         mm_df['matched'] = False
 
-    excel_df[date_col] = pd.to_datetime(excel_df[date_col], errors='coerce', dayfirst=True)
+    excel_df[date_col] = parse_bank_date(excel_df[date_col])
     excel_df[amount_col] = pd.to_numeric(excel_df[amount_col], errors='coerce').fillna(0)
     
     results = []

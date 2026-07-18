@@ -2,6 +2,30 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.5.0.11 - 2026-07-18
+
+Conciliación bancaria: subida múltiple con etiqueta por fichero (Bloque 2 de Propuesta #3).
+
+- `/api/analyze-excel` acepta varios ficheros a la vez (`files`+`labels`, mismo orden; etiqueta
+  vacía → nombre de fichero). Un solo `getDataByPeriod` con el rango de fechas combinado de todos
+  los ficheros de la tanda, en vez de una llamada al móvil por fichero.
+- Matching independiente por fichero (limitación conocida documentada en `BACKLOG.md`, Propuesta
+  #4: un movimiento que aparezca en dos extractos a la vez, p.ej. una transferencia entre cuentas
+  propias, puede proponerse como "nuevo" en ambos — no resuelto en este cambio).
+- Respuesta cambiada de array plano a `{"proposals": [...], "file_errors": [...]}`: si un fichero
+  de la tanda no tiene estructura reconocible, se reporta y se sigue con el resto en vez de abortar
+  toda la subida.
+- Frontend: selección múltiple de ficheros con lista previa de etiquetas editables antes de
+  confirmar la subida, badge de etiqueta de origen en cada propuesta, filtro por etiqueta.
+- **Bug real encontrado en las pruebas y corregido en este mismo commit**: `pd.to_datetime(...,
+  dayfirst=True)` interpreta mal fechas ISO en pandas 3.0.3 (`'2026-07-08'` → 7 de agosto en vez
+  de 8 de julio, sin ambigüedad real en el string). Nueva `parse_bank_date()` compartida
+  (ISO8601 primero, `dayfirst=True` como fallback), usada en `reconciliation.py` y `app.py`.
+- Verificado en navegador real (Playwright) con 3 ficheros mezclados (Cajasur Excel + Revolut CSV
+  + BBVA Excel): 93 propuestas, etiquetas y filtro correctos, fechas correctas tras el fix.
+- `BACKLOG.md`: Propuesta #3 marcada como resuelta; nueva Propuesta #4 (matching cross-fichero)
+  anotada como pendiente.
+
 ## 0.4.0.10 - 2026-07-18
 
 Conciliación bancaria: soporte CSV (Bloque 1 de Propuesta #3).

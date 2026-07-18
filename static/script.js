@@ -7,6 +7,8 @@ let chartInstance = null;
 let currentFilter = { category: null, subCategory: null, searchStr: null, minAmount: null, maxAmount: null, tags: null };
 let currentPeriod = { startDate: '', endDate: '', label: '' };
 let lastProposals = []; // última tanda de propuestas de conciliación, para que confirmMatch() encuentre fecha/importe/descripción por source_id
+let pendingFiles = []; // ficheros seleccionados pendientes de etiquetar/confirmar antes de subir
+let currentLabelFilter = 'all'; // etiqueta de origen seleccionada en el filtro de propuestas
 
 // --- UTILIDADES DE CACHÉ ---
 function setCache(key, data) {
@@ -723,87 +725,190 @@ async function submitTransaction() {
     }
 }
 
-async function handleFileUpload() {
+function defaultLabelFor(filename) {
+    return (filename || '').replace(/\.[^/.]+$/, '') || filename;
+}
+
+function handleFilesSelected() {
     const fileInput = document.getElementById('excelInput');
-    const file = fileInput.files[0];
-    if (!file) {
-        alert("No se ha seleccionado ningún archivo.");
+    const files = Array.from(fileInput.files || []);
+    if (files.length === 0) return;
+    pendingFiles = files.map(file => ({ file, label: defaultLabelFor(file.name) }));
+    renderFileLabelsList();
+}
+
+function updatePendingLabel(idx, value) {
+    pendingFiles[idx].label = value.trim() || defaultLabelFor(pendingFiles[idx].file.name);
+}
+
+function cancelPendingFiles() {
+    pendingFiles = [];
+    document.getElementById('excelInput').value = '';
+    renderFileLabelsList();
+}
+
+function renderFileLabelsList() {
+    const container = document.getElementById('fileLabelsList');
+    if (pendingFiles.length === 0) {
+        container.style.display = 'none';
+        container.innerHTML = '';
         return;
     }
-    
+    container.style.display = 'block';
+    const rowsHtml = pendingFiles.map((pf, idx) => `
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+            <span style="flex:1; font-size:0.9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${pf.file.name}">${pf.file.name}</span>
+            <input type="text" value="${pf.label}" onchange="updatePendingLabel(${idx}, this.value)"
+                   placeholder="Etiqueta" style="width:180px; padding:6px 10px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); border-radius:8px; color:white;">
+        </div>
+    `).join('');
+    container.innerHTML = `
+        <h3>Ficheros seleccionados (${pendingFiles.length})</h3>
+        <p style="color:var(--text-muted); font-size:0.85rem; margin:5px 0 15px;">Ponle una etiqueta corta a cada uno (p.ej. "Revolut", "Cuenta Sabadell") para distinguirlos en la lista de propuestas.</p>
+        <div>${rowsHtml}</div>
+        <div class="modal-buttons" style="margin-top:15px;">
+            <button class="btn-secondary btn-sm" onclick="cancelPendingFiles()">Cancelar</button>
+            <button class="btn-primary btn-sm" onclick="confirmUploadFiles()">Analizar ${pendingFiles.length} fichero(s)</button>
+        </div>
+    `;
+}
+
+async function confirmUploadFiles() {
+    if (pendingFiles.length === 0) return;
+    const fileInput = document.getElementById('excelInput');
+    const list = document.getElementById('proposalsList');
+
     try {
         const formData = new FormData();
-        formData.append('file', file);
+        pendingFiles.forEach(pf => {
+            formData.append('files', pf.file);
+            formData.append('labels', pf.label);
+        });
         formData.append('windowDays', 3);
-        
-        const list = document.getElementById('proposalsList');
-        list.innerHTML = '<p>Analizando Excel... Por favor espera.</p>';
+
+        document.getElementById('fileLabelsList').style.display = 'none';
+        list.innerHTML = `<p>Analizando ${pendingFiles.length} fichero(s)... Por favor espera.</p>`;
 
         const res = await fetch('/api/analyze-excel', { method: 'POST', body: formData });
-        const proposals = await res.json();
+        const data = await res.json();
 
-        list.innerHTML = '';
-        if (!proposals || proposals.error) {
-            list.innerHTML = `<p style="color:#f87171">Error al analizar el Excel: ${proposals ? proposals.error : 'Desconocido'}</p>`;
-            fileInput.value = ''; // Limpiar input para permitir reintento
+        if (!data || data.error) {
+            list.innerHTML = `<p style="color:#f87171">Error al analizar: ${data ? data.error : 'Desconocido'}</p>`;
             return;
         }
 
-        // Ordenar del más reciente (arriba) al más antiguo (abajo)
-        proposals.sort((a,b) => new Date(b.date) - new Date(a.date));
-        lastProposals = proposals; // para que confirmMatch() pueda recuperar fecha/importe/descripción por source_id
+        lastProposals = data.proposals || [];
+        currentLabelFilter = 'all';
 
-        proposals.forEach(p => {
-            const card = document.createElement('div');
-            let isDuplicate = p.status !== 'new';
-            let badgeColor = p.status === 'reconciled' ? 'badge-info' :
-                             (isDuplicate ? (p.status === 'exact_match' ? 'badge-danger' : 'badge-warning') : 'badge-success');
-            let badgeText = p.status === 'reconciled' ? 'Ya Conciliado' :
-                           (p.status === 'exact_match' ? 'Duplicado Exacto' :
-                           (p.status === 'new' ? 'Nuevo Movimiento' : 'Posible Coincidencia'));
+        if (data.file_errors && data.file_errors.length > 0) {
+            const detalle = data.file_errors.map(fe => `${fe.filename} (${fe.label}): ${fe.error}`).join('\n');
+            alert(`Algunos ficheros no se pudieron leer:\n\n${detalle}`);
+        }
 
-            let candidatesHtml = '';
-            if (p.status === 'exact_match' || p.status === 'reconciled') {
-                candidatesHtml = `<div style="margin-top:10px;"><button class="btn-secondary btn-sm" onclick="showTransaction('${p.suggested_mm_ref}')">👁 Ver Registro Asociado</button></div>`;
-            } else if (p.status === 'suggested_match' || p.status === 'probable_match') {
-                candidatesHtml = `<div style="margin-top:10px;"><strong>Posibles Asociados en MoneyManager:</strong><ul style="list-style:none; padding-left:0; margin-top:5px;">`;
-                (p.candidates || []).forEach(cand => {
-                    candidatesHtml += `<li style="font-size:0.85rem; padding:5px; background:rgba(255,255,255,0.05); margin-bottom:5px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
-                                       <div>${cand.date} | <strong>${formatCurrency(cand.amount)}</strong> | ${cand.description.substring(0,25)}... | <em>${cand.asset}</em></div>
-                                        <button class="btn-primary btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="confirmMatch('${p.source_id}', '${cand.id}')">Confirmar Este</button>
-                                       </li>`;
-                });
-                candidatesHtml += `</ul></div>`;
-            } else if (p.status === 'new') {
-                // Deducir la cuenta base mirando si hay algún "exact_match" en el array para copiar su cuenta original
-                let defaultAccount = '';
-                let matchAcc = proposals.find(pr => pr.status === 'exact_match' && pr.suggested_mm_ref);
-                if (matchAcc && window.transactionsData) {
-                    let mmRecord = transactionsData.find(t => String(t.id) === String(matchAcc.suggested_mm_ref));
-                    if (mmRecord) defaultAccount = mmRecord.assetId;
-                }
-                let cleanDesc = (p.description || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                candidatesHtml = `<div style="margin-top:10px;"><button class="btn-primary btn-sm" onclick="prefillAddModal('${p.date}', ${p.amount}, '${cleanDesc}', '${defaultAccount}')">📥 Pre-rellenar y Añadir</button></div>`;
-            }
-                           
-            card.className = `card glass proposal-card ${isDuplicate ? 'duplicate' : 'new'}`;
-            card.innerHTML = `
-                <div class="proposal-header">
-                    <strong>${p.date}</strong>
-                    <span class="badge ${badgeColor}">${badgeText}</span>
-                </div>
-                <p>${p.description}</p>
-                <p class="amount ${p.amount < 0 ? 'outcome-text' : 'income-text'}">${formatCurrency(p.amount)}</p>
-                ${candidatesHtml}
-            `;
-            list.appendChild(card);
-        });
+        updateLabelFilterBar();
+        renderProposalsList();
     } catch (e) {
-        alert("Error crítico subiendo excel: " + e.message);
+        list.innerHTML = '';
+        alert("Error crítico subiendo ficheros: " + e.message);
     } finally {
-        // Siempre limpiar el input para que 'onchange' vuelva a dispararse si se elige el mismo archivo
+        pendingFiles = [];
         fileInput.value = '';
+        renderFileLabelsList();
     }
+}
+
+function updateLabelFilterBar() {
+    const bar = document.getElementById('proposalsFilterBar');
+    const labels = [...new Set(lastProposals.map(p => p.source_label))];
+
+    if (labels.length <= 1) {
+        bar.style.display = 'none';
+        bar.innerHTML = '';
+        currentLabelFilter = 'all';
+        return;
+    }
+
+    bar.style.display = 'flex';
+    const countAll = lastProposals.length;
+    const options = labels.map(l => {
+        const count = lastProposals.filter(p => p.source_label === l).length;
+        return `<option value="${l}" ${currentLabelFilter === l ? 'selected' : ''}>${l} (${count})</option>`;
+    }).join('');
+    bar.innerHTML = `
+        <label style="color:var(--text-muted); font-size:0.85rem;">Filtrar por origen:</label>
+        <select onchange="handleLabelFilterChange(this.value)" style="background:rgba(0,0,0,0.3); color:var(--text-main); border:1px solid var(--glass-border); border-radius:8px; padding:6px 10px;">
+            <option value="all" ${currentLabelFilter === 'all' ? 'selected' : ''}>Todos (${countAll})</option>
+            ${options}
+        </select>
+    `;
+}
+
+function handleLabelFilterChange(value) {
+    currentLabelFilter = value;
+    renderProposalsList();
+}
+
+function renderProposalsList() {
+    const list = document.getElementById('proposalsList');
+    list.innerHTML = '';
+
+    if (lastProposals.length === 0) {
+        return;
+    }
+
+    const visible = (currentLabelFilter === 'all'
+        ? lastProposals
+        : lastProposals.filter(p => p.source_label === currentLabelFilter)
+    ).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    visible.forEach(p => {
+        const card = document.createElement('div');
+        let isDuplicate = p.status !== 'new';
+        let badgeColor = p.status === 'reconciled' ? 'badge-info' :
+                         (isDuplicate ? (p.status === 'exact_match' ? 'badge-danger' : 'badge-warning') : 'badge-success');
+        let badgeText = p.status === 'reconciled' ? 'Ya Conciliado' :
+                       (p.status === 'exact_match' ? 'Duplicado Exacto' :
+                       (p.status === 'new' ? 'Nuevo Movimiento' : 'Posible Coincidencia'));
+
+        let candidatesHtml = '';
+        if (p.status === 'exact_match' || p.status === 'reconciled') {
+            candidatesHtml = `<div style="margin-top:10px;"><button class="btn-secondary btn-sm" onclick="showTransaction('${p.suggested_mm_ref}')">👁 Ver Registro Asociado</button></div>`;
+        } else if (p.status === 'suggested_match' || p.status === 'probable_match') {
+            candidatesHtml = `<div style="margin-top:10px;"><strong>Posibles Asociados en MoneyManager:</strong><ul style="list-style:none; padding-left:0; margin-top:5px;">`;
+            (p.candidates || []).forEach(cand => {
+                candidatesHtml += `<li style="font-size:0.85rem; padding:5px; background:rgba(255,255,255,0.05); margin-bottom:5px; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+                                   <div>${cand.date} | <strong>${formatCurrency(cand.amount)}</strong> | ${cand.description.substring(0,25)}... | <em>${cand.asset}</em></div>
+                                    <button class="btn-primary btn-sm" style="padding:2px 8px; font-size:0.75rem;" onclick="confirmMatch('${p.source_id}', '${cand.id}')">Confirmar Este</button>
+                                   </li>`;
+            });
+            candidatesHtml += `</ul></div>`;
+        } else if (p.status === 'new') {
+            // Deducir la cuenta base mirando si hay algún "exact_match" en el array para copiar su cuenta original
+            let defaultAccount = '';
+            let matchAcc = lastProposals.find(pr => pr.status === 'exact_match' && pr.suggested_mm_ref);
+            if (matchAcc && window.transactionsData) {
+                let mmRecord = transactionsData.find(t => String(t.id) === String(matchAcc.suggested_mm_ref));
+                if (mmRecord) defaultAccount = mmRecord.assetId;
+            }
+            let cleanDesc = (p.description || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            candidatesHtml = `<div style="margin-top:10px;"><button class="btn-primary btn-sm" onclick="prefillAddModal('${p.date}', ${p.amount}, '${cleanDesc}', '${defaultAccount}')">📥 Pre-rellenar y Añadir</button></div>`;
+        }
+
+        card.className = `card glass proposal-card ${isDuplicate ? 'duplicate' : 'new'}`;
+        card.innerHTML = `
+            <div class="proposal-header">
+                <strong>${p.date}</strong>
+                <span style="display:flex; gap:6px;">
+                    <span class="badge badge-info" title="${p.source_filename || ''}">${p.source_label || ''}</span>
+                    <span class="badge ${badgeColor}">${badgeText}</span>
+                </span>
+            </div>
+            <p>${p.description}</p>
+            <p class="amount ${p.amount < 0 ? 'outcome-text' : 'income-text'}">${formatCurrency(p.amount)}</p>
+            ${candidatesHtml}
+        `;
+        list.appendChild(card);
+    });
 }
 
 function prefillAddModal(date, amount, content, defaultAccount) {

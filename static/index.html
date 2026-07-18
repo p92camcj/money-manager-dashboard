@@ -117,9 +117,15 @@
             <section id="conciliationTab" class="tab-content">
                 <div class="conciliation-header">
                     <h2>Conciliación Semisupervisada</h2>
-                    <p>Sube tu Excel bancario para comparar movimientos.</p>
-                    <input type="file" id="excelInput" accept=".xls,.xlsx" style="display:none" onchange="handleFileUpload()">
-                    <button class="btn-secondary" onclick="document.getElementById('excelInput').click()">Subir Excel</button>
+                    <p>Sube uno o varios extractos bancarios (Excel o CSV) para comparar movimientos.</p>
+                    <input type="file" id="excelInput" accept=".xls,.xlsx,.csv" multiple style="display:none" onchange="handleFilesSelected()">
+                    <button class="btn-secondary" onclick="document.getElementById('excelInput').click()">Subir Excel/CSV</button>
+                </div>
+                <div id="fileLabelsList" class="card glass" style="display:none; margin-bottom:20px;">
+                    <!-- Ficheros seleccionados pendientes de etiquetar/confirmar -->
+                </div>
+                <div id="proposalsFilterBar" class="proposals-filter-bar" style="display:none; align-items:center; gap:10px; margin-bottom:15px;">
+                    <!-- Filtro por etiqueta de origen -->
                 </div>
                 <div id="proposalsList" class="proposals-grid">
                     <!-- Propuestas aquí -->
@@ -204,6 +210,6 @@
     </div>
 
     <script src="js/analytics.js?v=8"></script>
-    <script src="script.js?v=11"></script>
+    <script src="script.js?v=12"></script>
 </body>
 </html>

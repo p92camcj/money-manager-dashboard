@@ -42,7 +42,7 @@ logger.addHandler(_file_handler)
 
 from backend.reconciliation import match_bank_transactions
 from backend.reconciliation_store import make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation
-from backend.bank_statement_parser import parse_bank_statement, BankStatementFormatError
+from backend.bank_statement_parser import parse_bank_statement, parse_bank_date, BankStatementFormatError
 from backend.budget_engine import BudgetEngine
 
 app = Flask(__name__, static_folder='static')
@@ -184,39 +184,52 @@ def proxy(endpoint):
 
 @app.route('/api/analyze-excel', methods=['POST'])
 def analyze_excel():
-    if 'file' not in request.files:
-        return jsonify({"error": "No hay archivo"}), 400
-
-    file = request.files['file']
-    account_name = request.form.get('accountName', 'CASA')
+    """Analiza uno o varios extractos bancarios (Excel o CSV) a la vez, cada uno con su propia
+    etiqueta de origen. Una sola consulta a Money Manager cubriendo el rango de fechas combinado
+    de todos los ficheros, y el matching se hace por separado para cada fichero — dos ficheros no
+    se enteran el uno del otro (p.ej. una transferencia entre cuentas propias que aparezca en dos
+    extractos a la vez podría proponerse como "nuevo movimiento" en ambos; no resuelto aquí)."""
+    uploaded_files = request.files.getlist('files')
+    labels = request.form.getlist('labels')
     window_days = int(request.form.get('windowDays', 3))
-    file_bytes = file.read()
+
+    if not uploaded_files:
+        return jsonify({"error": "No hay archivos"}), 400
 
     try:
-        # Detección genérica de la estructura del banco (cabecera + columnas por alias,
-        # Excel o CSV — ver backend/bank_statement_parser.py) — lanza BankStatementFormatError
-        # si no hay confianza razonable, en vez de asumir algo silenciosamente incorrecto.
-        df, header_row_idx, column_map = parse_bank_statement(file_bytes, file.filename)
-        logger.info(f"[analyze-excel] '{file.filename}': cabecera detectada en fila {header_row_idx} (0-indexada) | columnas: {column_map}")
+        parsed_files = []  # [{label, filename, df}]
+        file_errors = []  # [{label, filename, error}]
+        for idx, file in enumerate(uploaded_files):
+            label = (labels[idx].strip() if idx < len(labels) and labels[idx].strip() else file.filename)
+            file_bytes = file.read()
+            try:
+                df, header_row_idx, column_map = parse_bank_statement(file_bytes, file.filename)
+                logger.info(f"[analyze-excel] '{file.filename}' ({label}): cabecera detectada en fila {header_row_idx} (0-indexada) | columnas: {column_map}")
+                parsed_files.append({'label': label, 'filename': file.filename, 'df': df})
+            except BankStatementFormatError as e:
+                logger.error(f"[analyze-excel] '{file.filename}' ({label}): estructura no reconocida: {e}")
+                file_errors.append({'label': label, 'filename': file.filename, 'error': str(e)})
 
-        parsed_dates = pd.to_datetime(df['Fecha'], errors='coerce', dayfirst=True)
-        valid_rows = parsed_dates.notna() & df['Importe'].notna()
-        logger.info(f"[analyze-excel] Filas totales en Excel: {len(df)} | Filas con fecha+importe válidos: {valid_rows.sum()}")
-        if valid_rows.any():
-            logger.info(f"[analyze-excel] Rango de fechas del Excel: {parsed_dates[valid_rows].min().date()} -> {parsed_dates[valid_rows].max().date()}")
+        if not parsed_files:
+            return jsonify({"error": "Ningún fichero reconocible", "file_errors": file_errors}), 400
+
+        # Rango de fechas combinado de TODOS los ficheros — una sola consulta al móvil
+        all_dates = pd.concat([parse_bank_date(pf['df']['Fecha']) for pf in parsed_files])
+        valid_dates = all_dates.dropna()
+        for pf in parsed_files:
+            pf_dates = parse_bank_date(pf['df']['Fecha'])
+            pf_valid = pf_dates.notna() & pf['df']['Importe'].notna()
+            logger.info(f"[analyze-excel] '{pf['filename']}' ({pf['label']}): {len(pf['df'])} filas totales | {pf_valid.sum()} válidas")
 
         phone_url = get_phone_url()
-        min_date = parsed_dates.min()
-        max_date = parsed_dates.max()
-
-        if pd.isna(min_date) or pd.isna(max_date):
+        if valid_dates.empty:
             start_str, end_str = "2026-03-01", "2026-03-31"
         else:
-            start_str = (min_date - pd.Timedelta(days=15)).strftime('%Y-%m-%d')
-            end_str = (max_date + pd.Timedelta(days=15)).strftime('%Y-%m-%d')
+            start_str = (valid_dates.min() - pd.Timedelta(days=15)).strftime('%Y-%m-%d')
+            end_str = (valid_dates.max() + pd.Timedelta(days=15)).strftime('%Y-%m-%d')
 
         mm_url = f"{phone_url}/moneyBook/getDataByPeriod?startDate={start_str}&endDate={end_str}"
-        logger.info(f"[analyze-excel] Consultando Money Manager: {mm_url}")
+        logger.info(f"[analyze-excel] Consultando Money Manager (rango combinado de {len(parsed_files)} fichero(s)): {mm_url}")
         try:
             resp = requests.get(mm_url, timeout=10)
             resp.raise_for_status()
@@ -228,36 +241,47 @@ def analyze_excel():
             logger.error(f"[analyze-excel] ERROR consultando Money Manager en {mm_url}: {e}")
             real_transactions = []
 
-        proposals = match_bank_transactions(
-            excel_df=df,
-            mm_transactions=real_transactions,
-            date_col='Fecha',
-            amount_col='Importe',
-            desc_col='Concepto',
-            window_days=window_days
-        )
-
-        # Sobreescribir con conciliaciones ya confirmadas en sesiones anteriores: el usuario ya dio
-        # la respuesta correcta, no hace falta volver a preguntarle sobre la misma línea.
-        reconciled_count = 0
+        # Matching independiente por fichero contra el mismo real_transactions — dos ficheros no
+        # se enteran el uno del otro (ver docstring de la función).
         reconciliations = load_reconciliation_store()
-        for p in proposals:
-            key = make_key(p['date'], p['amount'], p['description'])
-            confirmation = get_confirmation(key, store=reconciliations)
-            if confirmation:
-                p['status'] = 'reconciled'
-                p['confidence'] = 100
-                p['suggested_mm_ref'] = confirmation['mm_id']
-                p['candidates'] = []
-                reconciled_count += 1
+        all_proposals = []
+        reconciled_count = 0
+        for file_idx, pf in enumerate(parsed_files):
+            proposals = match_bank_transactions(
+                excel_df=pf['df'],
+                mm_transactions=real_transactions,
+                date_col='Fecha',
+                amount_col='Importe',
+                desc_col='Concepto',
+                window_days=window_days
+            )
+            for p in proposals:
+                p['source_id'] = f"f{file_idx}_{p['source_id']}"
+                p['source_label'] = pf['label']
+                p['source_filename'] = pf['filename']
 
-        status_counts = Counter(p['status'] for p in proposals)
-        logger.info(f"[analyze-excel] Resultado de conciliación ({len(proposals)} filas, {reconciled_count} ya conciliadas antes): {dict(status_counts)}")
+                # Sobreescribir con conciliaciones ya confirmadas en sesiones anteriores: el
+                # usuario ya dio la respuesta correcta, no hace falta volver a preguntarle sobre
+                # la misma línea. La clave NO incluye la etiqueta — identifica el movimiento
+                # bancario en sí, no de qué fichero vino.
+                key = make_key(p['date'], p['amount'], p['description'])
+                confirmation = get_confirmation(key, store=reconciliations)
+                if confirmation:
+                    p['status'] = 'reconciled'
+                    p['confidence'] = 100
+                    p['suggested_mm_ref'] = confirmation['mm_id']
+                    p['candidates'] = []
+                    reconciled_count += 1
 
-        return jsonify(clean_nans(proposals))
-    except BankStatementFormatError as e:
-        logger.error(f"[analyze-excel] Estructura del fichero no reconocida: {e}")
-        return jsonify({"error": str(e)}), 400
+                all_proposals.append(p)
+
+        status_counts = Counter(p['status'] for p in all_proposals)
+        logger.info(f"[analyze-excel] Resultado de conciliación ({len(all_proposals)} filas de {len(parsed_files)} fichero(s), {reconciled_count} ya conciliadas antes): {dict(status_counts)}")
+
+        return jsonify({
+            'proposals': clean_nans(all_proposals),
+            'file_errors': file_errors,
+        })
     except Exception as e:
         logger.error(f"[analyze-excel] ERROR inesperado: {e}")
         return jsonify({"error": str(e)}), 500

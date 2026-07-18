@@ -98,6 +98,21 @@ def detect_bank_columns(raw_df, max_scan=30):
     return None, None
 
 
+def parse_bank_date(series):
+    """Parsea una columna de fechas que puede venir en formato español (DD/MM/YYYY, p.ej.
+    Cajasur/BBVA/Sabadell) o ISO (YYYY-MM-DD[ HH:MM:SS], p.ej. Revolut).
+
+    OJO: `pd.to_datetime(..., dayfirst=True)` interpreta MAL fechas ISO en pandas 3.x — p.ej.
+    '2026-07-08' se convierte en 7 de agosto en vez de 8 de julio, aunque el formato no sea
+    ambiguo (confirmado en pandas 3.0.3). Por eso se prueba primero como ISO8601 estricto (que
+    rechaza con NaT cualquier cosa que no sea YYYY-MM-DD, así que nunca confunde un DD/MM/YYYY
+    español), y solo se usa dayfirst=True como fallback para las fechas que ISO8601 no reconoce.
+    """
+    iso_parsed = pd.to_datetime(series, format='ISO8601', errors='coerce')
+    dayfirst_parsed = pd.to_datetime(series, errors='coerce', dayfirst=True)
+    return iso_parsed.combine_first(dayfirst_parsed)
+
+
 def parse_spanish_amount(val):
     """Normaliza importes que pueden venir como texto con formato español
     (punto de miles, coma decimal, p.ej. '1.234,56') o ya firmados con punto
