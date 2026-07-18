@@ -86,7 +86,7 @@ limitación original persiste tal cual estaba documentada.
 
 ### Propuesta #2: distribución a amigos con un clic y auto-actualización
 
-- **Estado:** por diseñar — no implementar todavía, solo anotado.
+- **Estado:** EN PROGRESO.
 - **Anotado:** 2026-07-18.
 
 Idea: que otros usuarios de Money Manager puedan ejecutar este dashboard en su propio PC/WiFi/
