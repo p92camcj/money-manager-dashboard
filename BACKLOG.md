@@ -60,6 +60,27 @@ espera realmente el servidor PC Manager. Pendiente de instrumentar (log del payl
 
 ## Propuestas de mejora pendientes
 
+### Propuesta #3: soporte CSV y subida múltiple con etiqueta por fichero
+
+- **Estado:** en progreso desde 2026-07-18.
+- **Anotado:** 2026-07-18.
+
+Dos ampliaciones a la conciliación bancaria:
+- Soporte para extractos en CSV (empezando por Revolut, `samples/revolut.csv`), reutilizando la
+  misma tubería de detección de cabecera + mapeo de columnas por alias de
+  `backend/bank_excel_parser.py` (Propuesta #1) — solo cambia cómo se lee el fichero en bruto
+  según la extensión, no la lógica de detección.
+- Subida de varios ficheros a la vez (Excel y/o CSV mezclados), cada uno con una etiqueta de
+  origen editable (p. ej. "Revolut", "Cuenta Sabadell") para poder ver movimientos de varias
+  cuentas/bancos a la vez pero distinguidos. Un solo `getDataByPeriod` con el rango combinado de
+  todos los ficheros de la tanda, en vez de una llamada al móvil por fichero.
+
+Caso borde identificado por el usuario, no resuelto en esta propuesta: si el mismo movimiento
+aparece en dos ficheros distintos a la vez (p. ej. una transferencia entre dos cuentas propias,
+visible en ambos extractos), cada fichero se concilia contra Money Manager por separado sin saber
+del otro — posible duplicado de "nuevo movimiento" entre ficheros. Pendiente de decidir si merece
+la pena resolverlo y cómo.
+
 ### Propuesta #2: distribución a amigos con un clic y auto-actualización
 
 - **Estado:** por diseñar — no implementar todavía, solo anotado.

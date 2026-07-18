@@ -42,7 +42,7 @@ logger.addHandler(_file_handler)
 
 from backend.reconciliation import match_bank_transactions
 from backend.reconciliation_store import make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation
-from backend.bank_excel_parser import parse_bank_excel, BankExcelFormatError
+from backend.bank_statement_parser import parse_bank_statement, BankStatementFormatError
 from backend.budget_engine import BudgetEngine
 
 app = Flask(__name__, static_folder='static')
@@ -194,10 +194,10 @@ def analyze_excel():
 
     try:
         # Detección genérica de la estructura del banco (cabecera + columnas por alias,
-        # ver backend/bank_excel_parser.py) — lanza BankExcelFormatError si no hay confianza
-        # razonable, en vez de asumir algo silenciosamente incorrecto.
-        df, header_row_idx, column_map = parse_bank_excel(file_bytes)
-        logger.info(f"[analyze-excel] Cabecera detectada en fila {header_row_idx} (0-indexada) | columnas: {column_map}")
+        # Excel o CSV — ver backend/bank_statement_parser.py) — lanza BankStatementFormatError
+        # si no hay confianza razonable, en vez de asumir algo silenciosamente incorrecto.
+        df, header_row_idx, column_map = parse_bank_statement(file_bytes, file.filename)
+        logger.info(f"[analyze-excel] '{file.filename}': cabecera detectada en fila {header_row_idx} (0-indexada) | columnas: {column_map}")
 
         parsed_dates = pd.to_datetime(df['Fecha'], errors='coerce', dayfirst=True)
         valid_rows = parsed_dates.notna() & df['Importe'].notna()
@@ -255,8 +255,8 @@ def analyze_excel():
         logger.info(f"[analyze-excel] Resultado de conciliación ({len(proposals)} filas, {reconciled_count} ya conciliadas antes): {dict(status_counts)}")
 
         return jsonify(clean_nans(proposals))
-    except BankExcelFormatError as e:
-        logger.error(f"[analyze-excel] Estructura del Excel no reconocida: {e}")
+    except BankStatementFormatError as e:
+        logger.error(f"[analyze-excel] Estructura del fichero no reconocida: {e}")
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"[analyze-excel] ERROR inesperado: {e}")

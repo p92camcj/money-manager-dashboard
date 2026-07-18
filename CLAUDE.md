@@ -49,9 +49,9 @@ backend/
   budget_engine.py    BudgetEngine: construye el árbol jerárquico presupuesto vs. gasto real
                        por categoría/subcategoría, y calcula flujos de caja (ingreso/gasto/
                        transferencias) ignorando transferencias en el cómputo de presupuesto.
-  bank_excel_parser.py Detección genérica de la estructura de un extracto bancario en Excel
-                       (parse_bank_excel()). Ver detalle en la sección "Parseo de extractos
-                       bancarios (multi-banco)" más abajo.
+  bank_statement_parser.py Detección genérica de la estructura de un extracto bancario, Excel o
+                       CSV (parse_bank_statement()). Ver detalle en la sección "Parseo de
+                       extractos bancarios (multi-banco)" más abajo.
   reconciliation_store.py Persistencia local de conciliaciones confirmadas. Ver "Persistencia de
                        conciliaciones confirmadas" más abajo.
 
@@ -60,12 +60,13 @@ app.py             Flask app. Sirve static/, y expone:
   /api/proxy/<endpoint>    -> proxy genérico GET/POST hacia http://<phone_ip>:<phone_port>/<endpoint>
                               (p.ej. /api/proxy/moneyBook/getDataByPeriod). Convierte XML a JSON,
                               limpia JSON no estándar del móvil (comillas sueltas, comas finales).
-  /api/analyze-excel       -> conciliación: recibe el Excel del banco, lo parsea con
-                              backend/bank_excel_parser.py::parse_bank_excel() (ver sección
-                              dedicada más abajo), pide transacciones reales al móvil en la misma
-                              ventana de fechas, llama a match_bank_transactions. Si el Excel no
-                              tiene una estructura reconocible, responde 400 con un mensaje claro
-                              (BankExcelFormatError) en vez de adivinar. Emite logs con prefijo
+  /api/analyze-excel       -> conciliación: recibe UN extracto bancario (Excel o CSV; el nombre
+                              del endpoint es historia, no una limitación — ver más abajo), lo
+                              parsea con backend/bank_statement_parser.py::parse_bank_statement()
+                              (ver sección dedicada), pide transacciones reales al móvil en la
+                              misma ventana de fechas, llama a match_bank_transactions. Si el
+                              fichero no tiene una estructura reconocible, responde 400 con un
+                              mensaje claro (BankStatementFormatError) en vez de adivinar. Emite logs con prefijo
                               "[analyze-excel]" (fila/columnas de cabecera detectadas, filas
                               parseadas, rango de fechas, URL y rango consultado al móvil,
                               éxito/excepción de esa llamada, muestra de transacciones recibidas, y
@@ -207,9 +208,12 @@ construir el payload). Para transferencias se usa además `targetAssetId` (ID de
 
 ## Parseo de extractos bancarios (multi-banco)
 
-`backend/bank_excel_parser.py::parse_bank_excel()` detecta la estructura de un Excel bancario sin
-asumir un banco concreto — verificado contra 6 extractos reales distintos en `samples/` (Cajasur,
-BBVA, EVO cuenta, EVO tarjeta, Sabadell). Diseño:
+`backend/bank_statement_parser.py::parse_bank_statement()` detecta la estructura de un extracto
+bancario (Excel **o CSV**) sin asumir un banco concreto — verificado contra 7 extractos reales
+distintos en `samples/` (Cajasur, BBVA, EVO cuenta, EVO tarjeta, Sabadell, Revolut CSV). La
+detección de cabecera y el mapeo de columnas son **exactamente los mismos** independientemente del
+formato de fichero; lo único que cambia según la extensión (`_read_raw()`) es cómo se lee el
+fichero en bruto a un DataFrame — no hay dos caminos de lógica separados para Excel y CSV. Diseño:
 
 - **Detección de la fila de cabecera**: escanea las primeras filas (hasta `max_scan=30`) buscando
   una que contenga, en alguna de sus celdas, algo clasificable como fecha + concepto + (importe o
@@ -230,9 +234,16 @@ BBVA, EVO cuenta, EVO tarjeta, Sabadell). Diseño:
   un test sintético, no con datos reales; si aparece un banco real con este formato, verificar que
   el signo resultante es el esperado.
 - **Fallo explícito, nunca una suposición silenciosa**: si ninguna fila candidata reúne fecha +
-  concepto + importe con confianza, `parse_bank_excel()` lanza `BankExcelFormatError`, y
+  concepto + importe con confianza, `parse_bank_statement()` lanza `BankStatementFormatError`, y
   `/api/analyze-excel` la traduce a `400` con el mensaje tal cual — mejor que el usuario vea "no
-  reconozco este Excel" a que la conciliación se ejecute silenciosamente sobre datos mal alineados.
+  reconozco este fichero" a que la conciliación se ejecute silenciosamente sobre datos mal
+  alineados.
+- **CSV — delimitador y encoding detectados, no asumidos**: `csv.Sniffer` detecta el delimitador
+  (coma, punto y coma, tabulador...) sobre una muestra del fichero; el encoding se prueba en orden
+  `utf-8-sig` → `cp1252` → `latin-1` (este último nunca falla, garantiza un resultado). El CSV se
+  lee con `csv.reader` fila a fila y se rellenan con `None` las filas más cortas que el máximo —
+  **no** con `pandas.read_csv` directo, que lanza `ParserError` si alguna fila tiene menos campos
+  que otras (habitual en CSV con metadatos antes de la cabecera real, igual que en Excel).
 - **Para dar soporte a un banco nuevo que falle**: casi seguro que basta con añadir el alias que le
   falta a `FIELD_ALIASES` (revisando qué texto normalizado tiene su cabecera real) — no hace falta
   tocar la lógica de detección en sí.

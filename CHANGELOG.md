@@ -2,6 +2,24 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.4.0.10 - 2026-07-18
+
+Conciliación bancaria: soporte CSV (Bloque 1 de Propuesta #3).
+
+- `backend/bank_excel_parser.py` renombrado a `backend/bank_statement_parser.py`
+  (`parse_bank_excel()` → `parse_bank_statement()`, `BankExcelFormatError` →
+  `BankStatementFormatError`) — ya no es solo para Excel.
+- Misma detección de cabecera y mapeo de columnas por alias que Excel, reutilizada tal cual; solo
+  cambia cómo se lee el fichero en bruto según la extensión (`_read_raw()`).
+- CSV leído con `csv.reader` (no `pandas.read_csv` directo) para tolerar filas de metadatos con
+  menos columnas que la cabecera real, igual que ya se toleraba en Excel — encontrado con un test
+  sintético antes de llegar a producción. Delimitador detectado con `csv.Sniffer` (coma, punto y
+  coma, tabulador...), encoding probado en orden `utf-8-sig` → `cp1252` → `latin-1`.
+- Nuevos alias para Revolut: `"fecha de inicio"` → fecha, `"fecha de finalización"` → fecha_valor
+  (ignorada, ya existía el campo).
+- Verificado end-to-end contra los 6 Excel de `samples/` + `revolut.csv` real (3/3 filas válidas) —
+  los 7 correctos vía `/api/analyze-excel` (Flask test client, sin conexión al móvil).
+
 ## 0.3.0.9 - 2026-07-18
 
 Conciliación bancaria multi-banco: ya no asume el formato de Cajasur.

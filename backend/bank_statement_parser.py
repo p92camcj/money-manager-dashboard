@@ -1,16 +1,20 @@
-"""Detección genérica de la estructura de un extracto bancario en Excel.
+"""Detección genérica de la estructura de un extracto bancario (Excel o CSV).
 
 Cada banco exporta con un número distinto de filas de metadatos antes de la
 cabecera real, columnas en orden distinto, y a veces nombres de columna
 abreviados ("F. Valor" en vez de "Fecha valor"). En vez de asumir una
 posición o un orden de columnas fijo, se busca la fila de cabecera real
 clasificando cada celda contra listas de alias conocidos por campo, y se
-mapean las columnas por lo que dicen sus celdas, no por su posición.
+mapean las columnas por lo que dicen sus celdas, no por su posición. Esta
+detección es la misma independientemente del formato de fichero — lo único
+que cambia según la extensión es cómo se lee el fichero en bruto a un
+DataFrame (_read_raw).
 
 Si no se puede detectar la estructura con confianza razonable, se lanza
-BankExcelFormatError en vez de asumir algo silenciosamente incorrecto —
+BankStatementFormatError en vez de asumir algo silenciosamente incorrecto —
 mejor un error explícito para el usuario que una conciliación mal hecha.
 """
+import csv
 import io
 import re
 import unicodedata
@@ -19,14 +23,14 @@ import pandas as pd
 
 # Alias en forma normalizada (sin acentos, minúsculas, sin puntos/barras).
 # "fecha_valor" se detecta explícitamente para IGNORARLA — no debe confundirse
-# con la fecha de operación real (aparece en Cajasur, BBVA, EVO, Sabadell).
+# con la fecha de operación real (aparece en Cajasur, BBVA, EVO, Sabadell, Revolut).
 FIELD_ALIASES = {
     'fecha': [
         'fecha', 'f operativa', 'fecha operativa', 'fecha contable',
-        'fecha operacion', 'fecha movimiento', 'date',
+        'fecha operacion', 'fecha movimiento', 'fecha de inicio', 'date',
     ],
     'fecha_valor': [
-        'fecha valor', 'f valor', 'valor',
+        'fecha valor', 'f valor', 'valor', 'fecha de finalizacion',
     ],
     'concepto': [
         'concepto', 'descripcion', 'comercio cajero', 'comercio',
@@ -43,9 +47,11 @@ FIELD_ALIASES = {
     ],
 }
 
+CSV_EXTENSIONS = {'csv'}
 
-class BankExcelFormatError(Exception):
-    """El Excel no tiene una estructura de columnas de fecha/concepto/importe reconocible."""
+
+class BankStatementFormatError(Exception):
+    """El extracto no tiene una estructura de columnas de fecha/concepto/importe reconocible."""
 
 
 def normalize_header_cell(text):
@@ -94,7 +100,8 @@ def detect_bank_columns(raw_df, max_scan=30):
 
 def parse_spanish_amount(val):
     """Normaliza importes que pueden venir como texto con formato español
-    (punto de miles, coma decimal, p.ej. '1.234,56') en vez de float nativo."""
+    (punto de miles, coma decimal, p.ej. '1.234,56') o ya firmados con punto
+    decimal (p.ej. Revolut, '-21.78') en vez de float nativo."""
     if pd.isna(val):
         return None
     if isinstance(val, (int, float)):
@@ -121,23 +128,78 @@ def build_importe_series(df, column_map):
     return abono - cargo
 
 
-def parse_bank_excel(file_bytes, max_scan=30):
-    """Lee los bytes de un Excel bancario y devuelve (df, header_row_idx, column_map).
+def _file_extension(filename):
+    if not filename or '.' not in filename:
+        return ''
+    return filename.rsplit('.', 1)[-1].lower()
+
+
+def _decode_csv_bytes(file_bytes):
+    """Prueba encodings en orden hasta que uno decodifique sin errores. latin-1 nunca
+    falla (mapea 1 byte -> 1 carácter), así que siempre hay un resultado."""
+    for encoding in ('utf-8-sig', 'cp1252'):
+        try:
+            return file_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return file_bytes.decode('latin-1')
+
+
+def _sniff_csv_delimiter(text_sample):
+    try:
+        return csv.Sniffer().sniff(text_sample, delimiters=',;\t|').delimiter
+    except csv.Error:
+        return ','
+
+
+def _read_csv_grid(file_bytes, skiprows=0):
+    """Lee un CSV a una rejilla uniforme tolerante a filas de ancho irregular.
+
+    pandas.read_csv exige el mismo número de columnas en todas las filas (lanza
+    ParserError si no); pero igual que los Excel bancarios, algunos CSV meten filas de
+    metadatos más cortas antes de la cabecera real ("Titular: Juan Perez" es 1 campo,
+    la fila de datos siguiente son 5). csv.reader no tiene ese problema — cada fila es
+    simplemente una lista de la longitud que tenga — así que se lee así y se rellenan
+    las filas cortas con None hasta el ancho máximo, imitando la rejilla dispersa que
+    read_excel ya da de forma nativa.
+    """
+    text = _decode_csv_bytes(file_bytes)
+    delimiter = _sniff_csv_delimiter(text[:4096])
+    rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
+    if skiprows:
+        rows = rows[skiprows:]
+    max_cols = max((len(r) for r in rows), default=0)
+    padded_rows = [r + [None] * (max_cols - len(r)) for r in rows]
+    return pd.DataFrame(padded_rows)
+
+
+def _read_raw(file_bytes, filename, skiprows=0):
+    """Lee el fichero (Excel o CSV, según la extensión) a un DataFrame sin cabecera —
+    misma forma de salida en ambos casos, para que detect_bank_columns() y el resto de
+    la tubería no necesiten saber de qué formato vino."""
+    if _file_extension(filename) in CSV_EXTENSIONS:
+        return _read_csv_grid(file_bytes, skiprows=skiprows)
+    return pd.read_excel(io.BytesIO(file_bytes), header=None, skiprows=skiprows)
+
+
+def parse_bank_statement(file_bytes, filename, max_scan=30):
+    """Lee los bytes de un extracto bancario (Excel o CSV) y devuelve
+    (df, header_row_idx, column_map).
 
     df tiene exactamente las columnas 'Fecha', 'Concepto', 'Importe', listas para
-    pasar a match_bank_transactions(). Lanza BankExcelFormatError si no se detecta
-    la estructura.
+    pasar a match_bank_transactions(). Lanza BankStatementFormatError si no se
+    detecta la estructura.
     """
-    raw_df = pd.read_excel(io.BytesIO(file_bytes), header=None)
+    raw_df = _read_raw(file_bytes, filename)
     header_row_idx, column_map = detect_bank_columns(raw_df, max_scan=max_scan)
 
     if header_row_idx is None:
-        raise BankExcelFormatError(
+        raise BankStatementFormatError(
             "No se pudo detectar una fila de cabecera con columnas de fecha, concepto e "
-            "importe (o cargo/abono) reconocibles en las primeras filas del Excel."
+            "importe (o cargo/abono) reconocibles en las primeras filas del fichero."
         )
 
-    df = pd.read_excel(io.BytesIO(file_bytes), header=None, skiprows=header_row_idx + 1)
+    df = _read_raw(file_bytes, filename, skiprows=header_row_idx + 1)
 
     result_df = pd.DataFrame({
         'Fecha': df.iloc[:, column_map['fecha']],
