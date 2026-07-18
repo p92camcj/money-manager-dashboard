@@ -12,6 +12,32 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Scrollbar acorde al glassmorphism (Firefox) */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(96, 165, 250, 0.4) rgba(255, 255, 255, 0.03);
+}
+
+/* Scrollbar acorde al glassmorphism (Chrome/Edge/Safari) */
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+*::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 10px;
+}
+*::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(65, 105, 225, 0.5), rgba(108, 92, 231, 0.5));
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(65, 105, 225, 0.8), rgba(108, 92, 231, 0.8));
+    background-clip: padding-box;
+}
+
 .app-footer {
     text-align: center;
     padding: 8px 10px 0;

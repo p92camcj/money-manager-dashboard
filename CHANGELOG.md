@@ -2,6 +2,13 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.1.2.3 - 2026-07-18
+
+Estética del scrollbar acorde al glassmorphism.
+
+- `scrollbar-width`/`scrollbar-color` (Firefox) y `::-webkit-scrollbar` (Chrome/Edge/Safari) con
+  esquinas redondeadas y degradado azul/violeta acorde a la paleta del resto del dashboard.
+
 ## 0.1.1.2 - 2026-07-18
 
 Corrige la posición del footer con la versión.
