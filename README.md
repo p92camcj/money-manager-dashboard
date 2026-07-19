@@ -7,6 +7,10 @@ contra su propio móvil — no hay ningún servicio centralizado ni cuenta que c
 `README` está pensado para alguien que clona el repo por primera vez y no ha tocado el proyecto
 nunca antes.
 
+> ¿Vas a instalarlo para alguien sin conocimientos técnicos (o para ti mismo, sin usar la
+> terminal)? Hay una vía más sencilla con un único ejecutable de Windows, sin `git` ni `python` —
+> ver [`README_AMIGOS.md`](README_AMIGOS.md).
+
 ## Características
 - **Dashboard Premium**: Visualización moderna con Glassmorphism.
 - **Proxy Inteligente**: Conexión directa con tu móvil evitando errores de CORS.
