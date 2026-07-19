@@ -1,0 +1,6 @@
+# Dependencias extra SOLO para generar el .exe de la distribución "amigable" (ver Propuesta #6
+# en BACKLOG.md) -- no hacen falta para la vía técnica (git clone + venv + `python app.py` /
+# `launch.py`), por eso viven separadas de requirements.txt en vez de mezcladas ahí: un usuario
+# de la vía técnica no necesita instalar pywebview/WebView2 ni PyInstaller para nada.
+-r requirements.txt
+pyinstaller

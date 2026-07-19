@@ -20,3 +20,9 @@ data/
 
 # Logs de diagnóstico (pueden contener descripciones de transacciones reales)
 logs/
+
+# Artefactos de compilación de PyInstaller (ver build_exe.spec) -- se regeneran en cada build,
+# no se versionan. El .spec sí se versiona, es código fuente de la build.
+build/
+dist/
+*.exe

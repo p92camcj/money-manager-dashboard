@@ -23,7 +23,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(line_buffering=True)
 
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+from backend.paths import base_dir, resource_dir
+
+# logs/, config.json y data/ deben persistir entre arranques -> base_dir() (carpeta del propio
+# .exe cuando está empaquetado con PyInstaller, raíz del repo en desarrollo). Ver backend/paths.py.
+LOG_DIR = os.path.join(base_dir(), "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 logger = logging.getLogger("money_manager_dashboard")
@@ -45,12 +49,14 @@ from backend.reconciliation_store import make_key, get_confirmation, load_store 
 from backend.bank_statement_parser import parse_bank_statement, parse_bank_date, BankStatementFormatError
 from backend.budget_engine import BudgetEngine
 
-app = Flask(__name__, static_folder='static')
+app = Flask(__name__, static_folder=os.path.join(resource_dir(), 'static'))
 CORS(app)  # Permite acceso desde el frontend en desarrollo
 
-# Configuración persistente
-CONFIG_FILE = "config.json"
-VERSION_FILE = "VERSION"
+# Configuración persistente. CONFIG_FILE vive junto al .exe (o en la raíz del repo en
+# desarrollo) porque debe sobrevivir entre arranques -- ver backend/paths.py. VERSION_FILE es un
+# recurso de solo lectura empaquetado junto con el código, por eso usa resource_dir().
+CONFIG_FILE = os.path.join(base_dir(), "config.json")
+VERSION_FILE = os.path.join(resource_dir(), "VERSION")
 # config.json no está versionado (cada usuario tiene su propia IP de LAN, ver
 # config.example.json) — este valor de ejemplo es el único que vive en el código, y se usa
 # tanto como fallback en memoria como para crear config.json en el primer arranque.

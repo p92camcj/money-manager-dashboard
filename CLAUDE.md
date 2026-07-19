@@ -438,6 +438,75 @@ contexto de cuenta no hay forma fiable de saber a qué lado corresponde.
   desarrollo, no comprometido al repo. Si aparece un caso real que no encaje, revisar primero el
   campo de cuenta destino (punto anterior) antes de asumir que la lógica de lados está mal.
 
+## Distribución con ejecutable de Windows (segunda vía, "amigable")
+
+Además de la vía técnica (`git clone` + venv + `launch.py`, ver más abajo "Comandos" y la
+Propuesta #2 resuelta en `BACKLOG.md`), existe una segunda vía pensada para un amigo sin
+conocimientos técnicos (Propuesta #6 en `BACKLOG.md`): un único `.exe` de Windows, doble clic, sin
+instalar nada. **Ninguna vía sustituye a la otra** — conviven, y cualquier cambio en una no debe
+romper la otra.
+
+- **Puntos de entrada distintos**: `app.py` (y `launch.py` por encima) siguen siendo el punto de
+  entrada de la vía técnica, sin cambios de comportamiento. `desktop_app.py` es el punto de
+  entrada nuevo, exclusivo del `.exe` — arranca Flask en un hilo de fondo (`host="127.0.0.1"`, no
+  `"0.0.0.0"` como `launch.py`: el único cliente es la propia ventana/navegador local, no hace
+  falta exponerlo a la LAN) y muestra el dashboard.
+- **`backend/paths.py`**: en un `.exe` de PyInstaller en modo `--onefile`, `sys._MEIPASS` es una
+  carpeta temporal **nueva en cada arranque** — sirve para leer recursos empaquetados de solo
+  lectura (`static/`, `VERSION`), pero NUNCA para datos que deban persistir entre sesiones
+  (`config.json`, `logs/`, `data/`), que se perderían en cuanto se cerrara la app. Por eso hay dos
+  funciones: `base_dir()` (datos de usuario que deben sobrevivir — carpeta del propio `.exe`
+  cuando `sys.frozen`, raíz del repo en desarrollo) y `resource_dir()` (recursos de solo lectura
+  empaquetados — `sys._MEIPASS` cuando `sys.frozen`, raíz del repo en desarrollo). `app.py` y
+  `backend/reconciliation_store.py` se actualizaron para usarlas en vez de rutas relativas fijas.
+  En desarrollo (`python app.py`/`launch.py`) ambas apuntan a la raíz del repo, exactamente igual
+  que antes de introducir este fichero -- verificado que la vía técnica no cambia de
+  comportamiento.
+- **`build_exe.spec`**: genera el `.exe` en modo `--onefile` (un único fichero) porque el objetivo
+  explícito es "un único ejecutable, doble clic, sin instalar nada" -- el arranque algo más lento
+  de `--onefile` (autoextracción a una carpeta temporal en cada arranque) es un precio aceptable
+  frente a la simplicidad de un solo fichero que descargar y mover. Empaqueta `static/` y
+  `VERSION` como datos de solo lectura; `backend/` no hace falta listarlo, PyInstaller sigue
+  automáticamente los `import backend.xxx` de `app.py`. `console=False` (sin ventana de consola)
+  porque el logging de diagnóstico ya va también a `logs/app.log` (ver "Logging de diagnóstico"
+  más arriba) -- no hace falta una consola visible para depurar.
+- **`requirements-desktop.txt`**: dependencias extra (`pyinstaller`, `pywebview`) SOLO para
+  generar el `.exe`, separadas de `requirements.txt` -- un usuario de la vía técnica no necesita
+  instalar WebView2/pywebview para nada. Usado por el workflow de GitHub Actions (ver más abajo).
+- **Ventana nativa (pywebview) en vez de navegador — decisión de diseño**: se usa la ventana con
+  marco por defecto de pywebview (sin `frameless=True`), no una sin barra de título. La API
+  pública de pywebview no ofrece un modo intermedio real de "solo ocultar la barra de título pero
+  conservar los botones de sistema" -- min/maximizar/cerrar se dibujan DENTRO de esa misma barra a
+  nivel de sistema operativo, así que la única forma de conservarlos sin la barra de título sería
+  reimplementar a mano el área no cliente de la ventana con la API de Win32 (`WM_NCHITTEST`,
+  DWM...), con una complejidad y un mantenimiento equivalentes a la opción `frameless` completa
+  que se quería evitar (habría que dibujar los tres botones a mano de todos modos). El marco por
+  defecto ya cumple el objetivo real (que no lo parezca un navegador): WebView2 no dibuja barra de
+  direcciones, pestañas ni marcadores -- solo quedan el título y los controles de sistema
+  estándar, exactamente como cualquier app nativa de Windows. Verificado visualmente (captura de
+  pantalla real durante el desarrollo, no conservada) y por logs: la ventana abre sin marco de
+  navegador y el dashboard funciona dentro exactamente igual que en el navegador de la vía técnica
+  (mismos `static/`, mismas rutas Flask -- no hay dos caminos de código distintos para servir la
+  UI).
+- **`updater.py`**: auto-actualización del `.exe` vía la API de GitHub Releases
+  (`GET /repos/p92camcj/money-manager-dashboard/releases/latest`), no vía git (no hay repo local
+  en la máquina de un amigo). Solo se activa si `sys.frozen` (nunca en modo desarrollo). Compara
+  el tag del último Release (`vX.Y.Z.W`) con el `VERSION` empaquetado; si hay uno más nuevo,
+  descarga el asset `MoneyManagerDashboard.exe` a `<exe>.new` y se auto-reemplaza. **Patrón de
+  auto-reemplazo en Windows**: un proceso no puede sobreescribir su propio `.exe` en ejecución, así
+  que se genera un script `.bat` auxiliar (sin dependencias de terceros ni un segundo ejecutable
+  compilado) que espera -- sondeando `tasklist` por PID -- a que el proceso actual termine, mueve
+  el `.exe` nuevo sobre el viejo, lo relanza, y se autoborra. Cualquier fallo (sin internet, GitHub
+  no responde, el Release no tiene el asset esperado...) se registra y la función retorna sin más
+  -- nunca bloquea el arranque ni lanza una excepción hacia arriba.
+- **Disparador de GitHub Actions**: push de un tag `v*` (p.ej. `v0.8.0.30`) -- el disparador más
+  simple de mantener (no depende de proteger ninguna rama ni de aprobar manualmente un workflow),
+  y encaja de forma natural con el propio formato de versión `X.Y.Z.W` ya usado en `VERSION`. El
+  workflow compila en `windows-latest` (única plataforma soportada por esta vía) con
+  `requirements-desktop.txt` + `build_exe.spec`, y publica `dist/MoneyManagerDashboard.exe` como
+  asset de un Release con ese mismo tag -- el asset se llama igual (`MoneyManagerDashboard.exe`)
+  en cada Release para que `updater.py` no tenga que descubrir el nombre dinámicamente.
+
 ## Versionado
 
 Formato `X.Y.Z.W`, constante `APP_VERSION` expuesta en `app.py` (o fichero `VERSION` en la raíz,

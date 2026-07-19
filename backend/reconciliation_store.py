@@ -3,7 +3,9 @@ import json
 import os
 from datetime import datetime, timezone
 
-STORE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "reconciliations.json")
+from backend.paths import base_dir
+
+STORE_PATH = os.path.join(base_dir(), "data", "reconciliations.json")
 
 
 def make_key(date_str, amount, description):
