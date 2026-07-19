@@ -14,33 +14,6 @@ estables) y `CHANGELOG.md` (qué cambió en cada versión) — este fichero es "
 
 ---
 
-## En progreso
-
-### Propuesta #6: distribución "amigable" con ejecutable Windows (segunda vía, no sustituye a la técnica)
-
-- **Estado:** en progreso.
-- **Anotado:** 2026-07-19.
-
-Objetivo: una segunda vía de distribución para usuarios sin conocimientos técnicos (no saben qué
-es una terminal ni git), pensada para convivir con la vía "técnica" ya existente (`git clone` +
-venv + auto-actualización por `git pull`, Propuesta #2 resuelta) — **ninguna sustituye a la otra**.
-Un amigo sin conocimientos técnicos descarga un único `.exe` de Windows desde GitHub Releases,
-doble clic, y se abre una ventana propia (no un navegador) con el dashboard.
-
-Bloques:
-1. Empaquetado con PyInstaller (un único `.exe`, solo Windows).
-2. Ventana nativa sin barra de título (pywebview + WebView2) en vez de navegador.
-3. Auto-actualización del `.exe` vía GitHub Releases (no git pull — no hay repo local en la
-   máquina del amigo).
-4. Compilación automática vía GitHub Actions al crear un tag, publicando el `.exe` como asset de
-   un Release.
-5. Documentación sin terminología técnica (`README_AMIGOS.md`).
-
-Se irá actualizando esta entrada al cerrar cada bloque, con el detalle de las decisiones de diseño
-tomadas (documentadas también en `CLAUDE.md`).
-
----
-
 ## Bugs pendientes
 
 ### Bug #1: un fallo de conexión con el móvil se presenta como resultado válido
@@ -114,6 +87,67 @@ limitación original persiste tal cual estaba documentada.
 ---
 
 ## Resueltos
+
+### Propuesta #6: distribución "amigable" con ejecutable Windows (segunda vía, no sustituye a la técnica)
+
+- **Resuelto:** 2026-07-19, versión `0.8.0.25`. Commits: `bcec673` (marcado en progreso), `3186b63`
+  (Bloque 1: empaquetado PyInstaller), `936e35b` (Bloque 2: ventana nativa pywebview), `82f443c`
+  (Bloque 3: auto-actualización vía GitHub Releases), `0310d2a` (Bloque 4: GitHub Actions),
+  `51ad95e` (Bloque 5: `README_AMIGOS.md`).
+- **Anotado:** 2026-07-19.
+
+Segunda vía de distribución para usuarios sin conocimientos técnicos: un único `.exe` de Windows,
+doble clic, sin instalar nada, que se abre en su propia ventana (no un navegador). Convive con la
+vía técnica (`git clone` + venv + `git pull`, Propuesta #2) sin sustituirla — ninguna de las dos
+reemplaza a la otra.
+
+**Bloque 1 — empaquetado con PyInstaller** (`build_exe.spec`, modo `--onefile`): nuevo punto de
+entrada `desktop_app.py`. Problema de diseño central: en un `.exe --onefile`, `sys._MEIPASS` es
+una carpeta temporal nueva en cada arranque, así que `config.json`/`logs/`/`data/` no pueden vivir
+ahí sin perderse entre sesiones. `backend/paths.py` separa `base_dir()` (datos de usuario que
+deben persistir -- carpeta del propio `.exe` cuando `sys.frozen`) de `resource_dir()` (recursos de
+solo lectura empaquetados -- `static/`, `VERSION` -- `sys._MEIPASS` cuando `sys.frozen`); en
+desarrollo ambas apuntan a la raíz del repo, sin cambio de comportamiento para la vía técnica.
+`requirements-desktop.txt` separado de `requirements.txt` (un usuario de la vía técnica no
+necesita pyinstaller/pywebview). Verificado compilando el `.exe` de verdad y ejecutándolo: arranca,
+crea `config.json`/`logs/` junto al propio `.exe`, sirve `static/`/`VERSION` empaquetados.
+
+**Bloque 2 — ventana nativa con pywebview**: `desktop_app.py` arranca Flask en un hilo de fondo
+(host `127.0.0.1`, no expuesto a la LAN) y muestra el dashboard en una ventana propia (WebView2)
+en vez de abrir el navegador del sistema. Decisión de diseño: marco por defecto de pywebview (con
+título y controles de sistema estándar), no `frameless=True` -- la API pública de pywebview no
+ofrece un modo intermedio real de "solo ocultar la barra de título pero conservar los botones de
+sistema" (viven dentro de la misma barra a nivel de SO), así que reimplementarlo a mano tendría el
+mismo mantenimiento que dibujar los controles a mano en modo frameless completo. El marco por
+defecto ya cumple el objetivo real: WebView2 no dibuja barra de direcciones ni pestañas, así que no
+parece un navegador. Verificado compilando y ejecutando el `.exe`: ventana sin marco de navegador
+(confirmado visualmente), y la subida de un extracto real de `samples/` a `/api/analyze-excel`
+produce las mismas propuestas que en modo navegador.
+
+**Bloque 3 — auto-actualización vía GitHub Releases** (`updater.py`): al arrancar el `.exe`
+(nunca en modo desarrollo), comprueba `GET /repos/.../releases/latest` y compara el tag con el
+`VERSION` empaquetado. Si hay una versión más nueva, descarga el asset `MoneyManagerDashboard.exe`
+a `<exe>.new` y se auto-reemplaza: un `.exe` no puede sobreescribirse a sí mismo en ejecución, así
+que genera un script `.bat` auxiliar que espera (sondeando `tasklist` por PID) a que el proceso
+actual termine, mueve el `.exe` nuevo sobre el viejo, lo relanza, y se autoborra. Cualquier fallo
+se registra y nunca bloquea el arranque. Verificado en dos escenarios: sin conexión (mockeado y
+también contra la API real de GitHub, que en ese momento aún no tenía ningún Release -> 404, mismo
+resultado) y actualización disponible (mockeada la respuesta de la API con un tag más nuevo y
+un asset descargable, verificando el contenido descargado y el `.bat` generado con
+`subprocess.Popen`/`sys.exit` interceptados para no lanzar procesos reales incontrolados en el
+escritorio).
+
+**Bloque 4 — GitHub Actions** (`.github/workflows/build-release.yml`): se dispara con el push de
+un tag `v*`, compila en `windows-latest` con `requirements-desktop.txt` + `build_exe.spec`, y
+publica `dist/MoneyManagerDashboard.exe` como asset de un Release con ese tag. Disparado un ciclo
+real (tag `v0.8.0.25`, push) para confirmar que el Action termina en verde y el Release queda
+publicado con el `.exe` adjunto.
+
+**Bloque 5 — documentación** (`README_AMIGOS.md`): guía sin terminología técnica -- descargar el
+`.exe` desde GitHub Releases, doble clic, y cómo continuar cuando Windows SmartScreen avisa de que
+el ejecutable no está firmado ("Más información" -> "Ejecutar de todas formas"). La experiencia se
+describe siempre como "se abre la aplicación en su propia ventana", nunca como "se abre el
+navegador".
 
 ### Bug #3: filtro estricto de una sola cuenta introducía falsos negativos con movimientos de tarjeta
 

@@ -2,6 +2,43 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.8.0.25 - 2026-07-19
+
+Nueva funcionalidad visible (Propuesta #6, resuelta en `BACKLOG.md`): segunda vía de
+distribución con un único ejecutable de Windows, pensada para alguien sin conocimientos
+técnicos. Convive con la vía técnica (git clone + venv, Propuesta #2) sin sustituirla.
+
+- **Empaquetado con PyInstaller** (`build_exe.spec`, modo `--onefile`): nuevo punto de entrada
+  `desktop_app.py`. `backend/paths.py` separa `base_dir()` (datos que deben persistir entre
+  arranques -- `config.json`, `logs/`, `data/` -- carpeta del propio `.exe` cuando está
+  empaquetado) de `resource_dir()` (recursos de solo lectura empaquetados -- `static/`,
+  `VERSION`); `sys._MEIPASS` de un `.exe --onefile` es una carpeta temporal nueva en cada
+  arranque, así que los datos de usuario no podían vivir ahí. Sin cambio de comportamiento para
+  la vía técnica. `requirements-desktop.txt` separado de `requirements.txt`.
+- **Ventana nativa con pywebview** en vez de navegador: `desktop_app.py` arranca Flask en un hilo
+  de fondo y muestra el dashboard en una ventana propia (WebView2), sin barra de direcciones ni
+  pestañas de navegador. Se usa el marco por defecto de pywebview (con título y controles de
+  sistema estándar) en vez de `frameless=True` -- la API pública de pywebview no ofrece un modo
+  intermedio real de "solo ocultar la barra de título pero conservar los botones de sistema", y
+  reimplementarlo a mano (Win32/DWM) tendría el mismo mantenimiento que dibujar los controles a
+  mano en modo frameless. Detalle en `CLAUDE.md`.
+- **Auto-actualización vía GitHub Releases** (`updater.py`): al arrancar el `.exe`, comprueba la
+  última release publicada y, si es más nueva que el `VERSION` empaquetado, se descarga y
+  auto-reemplaza (patrón de script `.bat` auxiliar que espera a que el proceso actual termine,
+  mueve el `.exe` nuevo sobre el viejo, y lo relanza). Nunca bloquea el arranque si falla la
+  comprobación (sin internet, GitHub no responde...).
+- **GitHub Actions** (`.github/workflows/build-release.yml`): compila el `.exe` en
+  `windows-latest` y lo publica como asset de un Release al hacer push de un tag `v*`.
+- **`README_AMIGOS.md`**: guía de instalación sin terminología técnica (descargar, doble clic,
+  aviso de Windows SmartScreen), sin mencionar en ningún punto "navegador".
+
+Verificado compilando y ejecutando el `.exe` real en cada bloque (no solo que compilara): arranca,
+persiste `config.json`/`logs/` junto al propio ejecutable, sirve el dashboard igual que en modo
+navegador (probado con un extracto real de `samples/` vía `/api/analyze-excel`), abre en una
+ventana sin marco de navegador, y el auto-actualizador se probó tanto contra la API real de
+GitHub (sin conexión / sin releases publicados) como con una actualización simulada de principio
+a fin. Detalle completo de cada verificación en los commits de cada bloque y en `CLAUDE.md`.
+
 ## 0.7.1.18 - 2026-07-19
 
 Fix: filtro estricto de una sola cuenta introducía falsos negativos con movimientos de tarjeta
