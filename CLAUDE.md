@@ -740,6 +740,65 @@ puede ni estar accesible) que en la vía técnica con navegador normal.
   comportamiento visual de `.search-hidden`) se verificó por trazado de código, no en un navegador
   real — pendiente de una verificación visual en vivo si aparece algún caso raro.
 
+## Modo de enlace manual banco ↔ Money Manager
+
+Introducido 2026-07-20. Caso motivador: un cargo de Amazon en el banco solo trae el número de
+pedido como concepto, mientras que en Money Manager se guarda con un concepto distinto y a veces
+con la fecha desplazada uno o dos días (fecha de cobro real del banco vs. fecha en que se registró
+en MM) — el matching automático (`match_bank_transactions()`) no los cruza, y ambos acaban como
+huérfanos vistos desde lados opuestos: la línea del banco como `new` en `lastProposals`, la
+transacción de MM en `mm_orphans` (Propuesta #11). Este modo, dentro de Conciliación, deja
+resolverlos a mano.
+
+- **Toggle** (`#manualLinkToggleBtn`, `toggleManualLinkMode()`): muestra/oculta
+  `#manualLinkSection`, con dos columnas — a la izquierda `lastProposals.filter(p => p.status ===
+  'new')`, a la derecha `lastOrphans` completo. Cada fila es un `<input type="radio">` (no
+  checkbox: un `<select>`/grupo de radios por columna garantiza por construcción que solo pueda
+  haber UNA selección de cada lado, que es justo lo que hace falta para formar un único par a
+  enlazar — más simple que checkboxes con validación manual de "solo uno").
+- **Deliberadamente NO se filtra por `currentLabelFilter`** (a diferencia de
+  `renderProposalsList()`/`renderMmOrphansList()`): el caso motivador es precisamente uno donde el
+  cargo del banco y su contrapartida en Money Manager pueden venir de ficheros/etiquetas distintas
+  de la misma tanda — limitar por la etiqueta activa iría en contra del propio propósito de este
+  modo.
+- **Ordenación por cercanía de importe** (mejora de usabilidad sugerida en la propuesta original):
+  en cuanto se selecciona una línea del banco, `renderManualLinkSection()` reordena la columna de
+  huérfanos por `Math.abs(orphan.amount - selectedBank.amount)` ascendente (en vez de por fecha) y
+  resalta con badge "💡 Importe parecido" + clase `.manual-link-row-suggested` los que coinciden en
+  importe hasta el céntimo — para no obligar a buscar a ojo en una lista larga.
+- **Reutiliza `/api/reconciliations/confirm` tal cual, sin endpoint ni almacén nuevos**
+  (`confirmManualLink()`): construye el mismo payload `{date, amount, description, mm_id}` que ya
+  usa `confirmMatch()`, con `date`/`amount`/`description` de la propuesta bancaria seleccionada y
+  `mm_id` del huérfano de MM seleccionado — un enlace manual es, en el fondo, un match confirmado
+  por el usuario con menos certeza automática que un `exact_match`/candidato sugerido, así que la
+  clave (`make_key()`) y la persistencia son exactamente las mismas. Nunca escribe en Money
+  Manager, solo vincula localmente los dos registros que ya existen (el de MM, y la fila del
+  extracto identificada por fecha+importe+descripción).
+- **Tras confirmar, mismo patrón que `confirmMatch()`** (Bug #9, ya resuelto): en vez de esperar a
+  que el usuario vuelva a subir el Excel para ver el resultado, se actualiza el estado local en el
+  sitio — `bankProposal.status = 'reconciled'` (con `suggested_mm_ref` = el id del huérfano, para
+  que "Ver Registro Asociado" quede disponible de inmediato) y el huérfano se quita de
+  `lastOrphans` con un `filter()` en el cliente. Esto último es necesario porque el backend solo
+  excluiría ese id en el PRÓXIMO análisis (`excluded_mm_ids` en `analyze_excel()` se recalcula
+  desde `data/reconciliations.json`, no retroactivamente sobre una respuesta ya recibida) — sin
+  este ajuste local, el huérfano seguiría viéndose en la lista hasta volver a subir el Excel.
+- **Al subir una tanda nueva** (`confirmUploadFiles()`), se limpia la selección del modo manual y
+  se vuelve a renderizar `#manualLinkSection` si estaba activo — de lo contrario, una selección
+  apuntando a un `source_id`/`id` de la tanda anterior quedaría huérfana (en el sentido de "sin
+  objeto real detrás", no confundir con los huérfanos de MM) tras reemplazar `lastProposals`/
+  `lastOrphans`.
+- **Fuera de alcance deliberadamente**: el buscador "Ctrl+F" (ver sección anterior) no filtra las
+  filas de este modo — solo las tarjetas de `#proposalsList`/`#mmOrphansList`/filas de
+  `#transBody`/nodos de `#budgetTree`. Es una herramienta especializada aparte, no una lista más
+  del flujo principal de revisión.
+- **Verificación**: sin móvil/navegador disponibles en la sesión en que se implementó (mismas
+  limitaciones que el buscador Ctrl+F, ver sección anterior) — verificado por trazado de código
+  (sintaxis completa con `node --check static/script.js`, y a mano que el payload de
+  `confirmManualLink()` coincide campo a campo con el que ya acepta `/api/reconciliations/confirm`,
+  sin tocar el backend). No probado end-to-end con un caso real de Amazon ni con datos sintéticos
+  en un navegador real — pendiente de una verificación en vivo la próxima vez que haya conexión al
+  móvil.
+
 ## Aviso de conexión perdida con el móvil
 
 **Resuelto 2026-07-19 (Bug #1 de `BACKLOG.md`).** Antes, un fallo de conexión con el móvil a

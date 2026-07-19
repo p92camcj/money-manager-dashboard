@@ -4,6 +4,12 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.12.1.44 - 2026-07-20
+
+- Nuevo en Conciliación: botón "Enlazar manualmente" para los casos que el emparejamiento
+  automático no acierta (por ejemplo, un cargo de Amazon con concepto o fecha distintos entre el
+  banco y Money Manager). Elige uno de cada lista y enlázalos a mano.
+
 ## 0.12.0.43 - 2026-07-20
 
 - Nuevo buscador propio: pulsa Ctrl+F en cualquier momento y aparece una barra de búsqueda arriba

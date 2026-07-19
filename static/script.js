@@ -10,6 +10,9 @@ let lastProposals = []; // última tanda de propuestas de conciliación, para qu
 let lastOrphans = []; // última tanda de huérfanos de Money Manager sin equivalente en el extracto (Propuesta #11, arqueo de caja)
 let pendingFiles = []; // ficheros seleccionados pendientes de etiquetar/confirmar antes de subir
 let currentLabelFilter = 'all'; // etiqueta de origen seleccionada en el filtro de propuestas
+let manualLinkMode = false; // modo de enlace manual banco <-> Money Manager activo en Conciliación
+let manualLinkSelectedBankSourceId = null; // source_id del proposal 'new' elegido en el modo manual
+let manualLinkSelectedOrphanId = null; // id de mm_orphans elegido en el modo manual
 
 // Mapa nombre de categoría/subcategoría -> mcid/mcscid reales de Money Manager (Bug #2,
 // BACKLOG.md: confirmado contra el móvil real que create/update IGNORAN mbCategory/subCategory
@@ -1109,6 +1112,11 @@ async function confirmUploadFiles() {
         renderProposalsList();
         renderMmOrphansList();
         renderReconciliationSummary();
+        // Datos nuevos -> cualquier selección del modo de enlace manual quedaría apuntando a
+        // objetos que ya no están en lastProposals/lastOrphans.
+        manualLinkSelectedBankSourceId = null;
+        manualLinkSelectedOrphanId = null;
+        renderManualLinkSection();
     } catch (e) {
         list.innerHTML = '';
         alert("Error crítico subiendo ficheros: " + e.message);
@@ -1414,6 +1422,146 @@ async function confirmMatch(sourceId, candId) {
         renderProposalsList();
     } catch (e) {
         alert("Error crítico confirmando match: " + e.message);
+    }
+}
+
+// --- MODO DE ENLACE MANUAL BANCO <-> MONEY MANAGER (huérfanos) ---
+// Caso motivador: un cargo de Amazon en el banco solo trae el número de pedido como concepto,
+// mientras que en Money Manager se guarda con un concepto distinto y a veces con la fecha
+// desplazada uno o dos días -- el matching automático no los cruza, y ambos quedan como huérfanos
+// (la línea del banco como "new" en `lastProposals`, la transacción de MM en `lastOrphans`).
+// Este modo muestra ambas listas en paralelo para que el usuario elija a mano una de cada una y
+// las enlace. NO es un mecanismo nuevo de persistencia: reutiliza el mismo
+// `/api/reconciliations/confirm` que ya usa confirmMatch() -- un enlace manual es, en el fondo, un
+// match confirmado por el usuario con menos certeza automática que un exact_match/candidato
+// sugerido. Nunca escribe en Money Manager, solo vincula localmente los dos registros que ya
+// existen allí y en el extracto.
+function toggleManualLinkMode() {
+    manualLinkMode = !manualLinkMode;
+    const section = document.getElementById('manualLinkSection');
+    const btn = document.getElementById('manualLinkToggleBtn');
+    manualLinkSelectedBankSourceId = null;
+    manualLinkSelectedOrphanId = null;
+    if (manualLinkMode) {
+        section.style.display = 'block';
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-primary');
+        renderManualLinkSection();
+    } else {
+        section.style.display = 'none';
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+    }
+}
+
+function selectManualLinkBank(sourceId) {
+    manualLinkSelectedBankSourceId = sourceId;
+    renderManualLinkSection();
+}
+
+function selectManualLinkOrphan(orphanId) {
+    manualLinkSelectedOrphanId = orphanId;
+    renderManualLinkSection();
+}
+
+// Deliberadamente NO se filtra por `currentLabelFilter` (a diferencia de renderProposalsList()/
+// renderMmOrphansList()) -- el caso motivador (Amazon) es precisamente uno donde el cargo del
+// banco y su contrapartida en Money Manager pueden venir de ficheros/etiquetas distintas, así que
+// limitar por etiqueta activa iría en contra del propio propósito de este modo.
+function renderManualLinkSection() {
+    if (!manualLinkMode) return;
+    const bankList = document.getElementById('manualLinkBankList');
+    const orphanList = document.getElementById('manualLinkOrphanList');
+    const confirmBtn = document.getElementById('manualLinkConfirmBtn');
+
+    const bankItems = lastProposals.filter(p => p.status === 'new');
+    const selectedBank = bankItems.find(p => p.source_id === manualLinkSelectedBankSourceId) || null;
+
+    // Mejora de usabilidad sugerida en la propuesta: con un movimiento del banco seleccionado,
+    // ordena los huérfanos de MM por cercanía de importe en vez de dejarlos solo por fecha -- no
+    // obliga a buscar a ojo en una lista larga.
+    let orphanItems = (lastOrphans || []).slice();
+    if (selectedBank) {
+        orphanItems.sort((a, b) => Math.abs(a.amount - selectedBank.amount) - Math.abs(b.amount - selectedBank.amount));
+    } else {
+        orphanItems.sort((a, b) => new Date(b.date) - new Date(a.date));
+    }
+
+    bankList.innerHTML = bankItems.length ? bankItems.map(p => `
+        <label class="manual-link-row ${manualLinkSelectedBankSourceId === p.source_id ? 'manual-link-row-selected' : ''}">
+            <input type="radio" name="manualLinkBank" value="${p.source_id}" ${manualLinkSelectedBankSourceId === p.source_id ? 'checked' : ''} onchange="selectManualLinkBank('${p.source_id}')">
+            <span class="manual-link-row-text">
+                <strong>${p.date}</strong> · ${formatCurrency(p.amount)}
+                <span class="manual-link-row-desc">${p.description}</span>
+                <span class="badge badge-info" style="font-size:0.7rem;">${p.source_label || ''}</span>
+            </span>
+        </label>
+    `).join('') : '<p class="text-muted" style="padding:10px;">No hay movimientos del banco sin match en esta tanda.</p>';
+
+    orphanList.innerHTML = orphanItems.length ? orphanItems.map(o => {
+        const closeAmount = !!(selectedBank && Math.abs(o.amount - selectedBank.amount) < 0.01);
+        return `
+        <label class="manual-link-row ${manualLinkSelectedOrphanId === o.id ? 'manual-link-row-selected' : ''} ${closeAmount ? 'manual-link-row-suggested' : ''}">
+            <input type="radio" name="manualLinkOrphan" value="${o.id}" ${manualLinkSelectedOrphanId === o.id ? 'checked' : ''} onchange="selectManualLinkOrphan('${o.id}')">
+            <span class="manual-link-row-text">
+                <strong>${o.date}</strong> · ${formatCurrency(o.amount)}
+                <span class="manual-link-row-desc">${o.description}${o.category ? ` · ${o.category}` : ''}</span>
+                <span class="badge badge-info" style="font-size:0.7rem;">${o.source_label || ''}</span>
+                ${closeAmount ? '<span class="badge badge-success" style="font-size:0.7rem;">💡 Importe parecido</span>' : ''}
+            </span>
+        </label>
+    `;
+    }).join('') : '<p class="text-muted" style="padding:10px;">No hay movimientos de Money Manager sin equivalente en esta tanda.</p>';
+
+    confirmBtn.disabled = !(manualLinkSelectedBankSourceId && manualLinkSelectedOrphanId);
+}
+
+async function confirmManualLink() {
+    const bankProposal = lastProposals.find(p => p.source_id === manualLinkSelectedBankSourceId);
+    const orphan = (lastOrphans || []).find(o => String(o.id) === String(manualLinkSelectedOrphanId));
+    if (!bankProposal || !orphan) {
+        alert("Selecciona un movimiento del banco y uno de Money Manager antes de confirmar.");
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/reconciliations/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                date: bankProposal.date,
+                amount: bankProposal.amount,
+                description: bankProposal.description,
+                mm_id: orphan.id
+            })
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            alert("Error al confirmar el enlace: " + (data.error || resp.status));
+            return;
+        }
+
+        // Mismo patrón que confirmMatch(): reflejar en el estado local el mismo resultado que
+        // calcularía analyze_excel() al re-analizar, para no depender de volver a subir el Excel.
+        // El huérfano se quita de lastOrphans aquí mismo -- el backend solo lo excluiría en el
+        // PRÓXIMO análisis (excluded_mm_ids se recalcula a partir de data/reconciliations.json),
+        // no de forma retroactiva sobre esta respuesta ya recibida.
+        bankProposal.status = 'reconciled';
+        bankProposal.confidence = 100;
+        bankProposal.suggested_mm_ref = orphan.id;
+        bankProposal.candidates = [];
+        lastOrphans = (lastOrphans || []).filter(o => String(o.id) !== String(orphan.id));
+
+        manualLinkSelectedBankSourceId = null;
+        manualLinkSelectedOrphanId = null;
+
+        renderProposalsList();
+        renderMmOrphansList();
+        renderReconciliationSummary();
+        renderManualLinkSection();
+        alert("Enlace manual confirmado -- vinculado localmente, no se ha escrito nada en Money Manager.");
+    } catch (e) {
+        alert("Error crítico confirmando el enlace: " + e.message);
     }
 }
 

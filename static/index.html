@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Money Manager Premium - Dashboard</title>
-    <link rel="stylesheet" href="style.css?v=15">
+    <link rel="stylesheet" href="style.css?v=16">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
@@ -120,12 +120,33 @@
                     <p>Sube uno o varios extractos bancarios (Excel o CSV) para comparar movimientos.</p>
                     <input type="file" id="excelInput" accept=".xls,.xlsx,.csv" multiple style="display:none" onchange="handleFilesSelected()">
                     <button class="btn-secondary" onclick="document.getElementById('excelInput').click()">Subir Excel/CSV</button>
+                    <button class="btn-secondary" id="manualLinkToggleBtn" onclick="toggleManualLinkMode()" title="Para casos que el matching automático no cruza -- elige a mano una línea del banco y un movimiento de Money Manager y enlázalos.">🔗 Enlazar manualmente</button>
                 </div>
                 <div id="fileLabelsList" class="card glass" style="display:none; margin-bottom:20px;">
                     <!-- Ficheros seleccionados pendientes de etiquetar/confirmar -->
                 </div>
                 <div id="reconciliationSummaryBar" class="reconciliation-summary-bar" style="display:none;">
                     <!-- Resumen del arqueo de caja: cuánto cuadra, cuánto falta por cada lado -->
+                </div>
+                <div id="manualLinkSection" class="manual-link-section card glass" style="display:none;">
+                    <h3>Enlazar manualmente banco ↔ Money Manager</h3>
+                    <p class="manual-link-hint">Para movimientos que el matching automático no cruza (p.ej. un cargo de Amazon que en el
+                        banco solo trae el número de pedido y en Money Manager un concepto distinto, con la fecha desplazada uno o dos
+                        días). Elige una línea de cada lista y confirma -- no se escribe nada en Money Manager, solo se vincula
+                        localmente, igual que al confirmar una coincidencia sugerida.</p>
+                    <div class="manual-link-columns">
+                        <div class="manual-link-column">
+                            <h4>Movimientos del banco sin match</h4>
+                            <div id="manualLinkBankList" class="manual-link-list"></div>
+                        </div>
+                        <div class="manual-link-column">
+                            <h4>Movimientos en Money Manager sin equivalente</h4>
+                            <div id="manualLinkOrphanList" class="manual-link-list"></div>
+                        </div>
+                    </div>
+                    <div class="modal-buttons" style="margin-top:15px;">
+                        <button type="button" class="btn-primary btn-sm" id="manualLinkConfirmBtn" disabled onclick="confirmManualLink()">Confirmar enlace</button>
+                    </div>
                 </div>
                 <div id="proposalsFilterBar" class="proposals-filter-bar" style="display:none; align-items:center; gap:10px; margin-bottom:15px;">
                     <!-- Filtro por etiqueta de origen -->
@@ -243,6 +264,6 @@
     </div>
 
     <script src="js/analytics.js?v=8"></script>
-    <script src="script.js?v=23"></script>
+    <script src="script.js?v=24"></script>
 </body>
 </html>

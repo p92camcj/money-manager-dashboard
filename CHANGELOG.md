@@ -3,6 +3,39 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.12.1.44 - 2026-07-20
+
+Propuesta #13 del `BACKLOG.md`: modo de enlace manual banco ↔ Money Manager para casos que el
+matching automático no cruza -- p.ej. un cargo de Amazon que en el banco solo trae el número de
+pedido como concepto, y en Money Manager se guarda con un concepto distinto y a veces con la fecha
+desplazada uno o dos días. Ambos acaban como huérfanos vistos desde lados opuestos (la línea del
+banco como `new`, la transacción de MM en `mm_orphans` de la Propuesta #11) sin que el matching
+heurístico los cruce nunca.
+
+- Toggle nuevo en Conciliación (`#manualLinkToggleBtn` -> `#manualLinkSection`,
+  `toggleManualLinkMode()` en `static/script.js`): dos columnas con selección única (radio
+  buttons) -- `lastProposals` con `status: 'new'` a la izquierda, `lastOrphans` a la derecha.
+  Deliberadamente sin filtrar por `currentLabelFilter` (a diferencia del resto de la pantalla): el
+  caso motivador es justo uno donde banco y MM pueden venir de ficheros/etiquetas distintas.
+- `confirmManualLink()` reutiliza `/api/reconciliations/confirm` TAL CUAL, sin endpoint ni almacén
+  nuevos -- mismo payload `{date, amount, description, mm_id}` que ya construye `confirmMatch()`.
+  Un enlace manual es, en el fondo, un match confirmado por el usuario con menos certeza automática
+  que un `exact_match`; nunca escribe en Money Manager.
+- Tras confirmar, mismo patrón que el fix del Bug #9 (BACKLOG.md): se actualiza el estado local en
+  el sitio (`bankProposal.status = 'reconciled'`, huérfano quitado de `lastOrphans` con `filter()`)
+  para que ambos desaparezcan de sus listas y "Ver Registro Asociado" quede disponible de
+  inmediato, sin depender de volver a subir el Excel -- necesario porque el backend solo excluiría
+  ese id retroactivamente en el PRÓXIMO análisis.
+- Mejora de usabilidad: al elegir un movimiento del banco, los huérfanos de MM se reordenan por
+  cercanía de importe (en vez de por fecha) y los que coinciden hasta el céntimo ganan un badge
+  "💡 Importe parecido" -- para no obligar a buscar a ojo en una lista larga.
+
+**Verificación**: sin móvil/navegador disponibles en la sesión en que se implementó -- verificado
+por trazado de código y sintaxis completa (`node --check static/script.js`), y a mano que el
+payload de `confirmManualLink()` coincide campo a campo con el que ya acepta
+`/api/reconciliations/confirm`. No probado end-to-end con un caso real de Amazon ni en un
+navegador real -- pendiente de verificación en vivo.
+
 ## 0.12.0.43 - 2026-07-20
 
 Buscador propio estilo "Ctrl+F" que funciona en toda la app, no limitado a una columna concreta.

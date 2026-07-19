@@ -51,6 +51,64 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Propuesta #13: modo de enlace manual banco ↔ Money Manager (huérfanos)
+
+- **Resuelto:** 2026-07-20, versión `0.12.1.44`.
+- **Anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió (caso real
+  de cargos de Amazon con concepto/fecha desplazados que el matching automático no cruza).
+
+Toggle nuevo en Conciliación (`#manualLinkToggleBtn`/`#manualLinkSection`) que muestra en paralelo
+los movimientos del banco sin match (`lastProposals` con `status: 'new'`) y los huérfanos de Money
+Manager de la tanda actual (`lastOrphans`, Propuesta #11), cada lista con selección única
+(radio buttons). Al confirmar un par, reutiliza tal cual `/api/reconciliations/confirm` (mismo
+payload que ya usa `confirmMatch()`) — NO se creó ningún endpoint ni almacén nuevo, un enlace
+manual es conceptualmente un match confirmado por el usuario con menos certeza automática que un
+`exact_match`. Tras confirmar, se actualiza el estado local en el sitio (mismo patrón que el fix
+del Bug #9: `bankProposal.status = 'reconciled'`, huérfano quitado de `lastOrphans` con un
+`filter()`) para que ambos desaparezcan de sus listas y el bancario pase a mostrar "Ver Registro
+Asociado" sin tener que volver a subir el Excel. Ordena los huérfanos por cercanía de importe al
+movimiento del banco seleccionado y resalta con badge los que coinciden hasta el céntimo. Detalle
+completo en `CLAUDE.md`, sección "Modo de enlace manual banco ↔ Money Manager".
+
+**Verificación:** sin móvil/navegador disponibles en la sesión en que se implementó -- verificado
+por trazado de código y sintaxis completa (`node --check`), no probado end-to-end con un caso real
+de Amazon ni en un navegador real. Pendiente de una verificación en vivo.
+
+### Propuesta #12: buscador estilo "Ctrl+F" en toda la pantalla
+
+- **Resuelto:** 2026-07-20, versión `0.12.0.43`.
+- **Anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió.
+
+Ctrl+F/Cmd+F dentro de la ventana abre una barra de búsqueda propia (`#inPageSearchBar`) en vez
+del buscador nativo del navegador/WebView -- necesario porque en el `.exe` la app corre en una
+ventana pywebview sin barra de direcciones, donde el buscador nativo puede ni estar accesible.
+Filtra por substring sin distinguir mayúsculas/tildes contra el texto visible de la vista activa
+(Transacciones, Conciliación, Presupuestos), ocultando lo que no coincide; se cierra con Escape.
+Detalle completo en `CLAUDE.md`, sección "Buscador 'Ctrl+F' en toda la pantalla".
+
+**Verificación:** sin navegador disponible en la sesión en que se implementó -- verificada la
+sintaxis completa del fichero (`node --check static/script.js`) y, por separado, la lógica de
+normalización de texto (`normalizeForSearch()`) evaluada en Node contra casos reales con
+tildes/mayúsculas. La integración con el DOM real se verificó por trazado de código, no en un
+navegador real.
+
+### Bug #5: la subcategoría no cargaba la primera vez que se abría el modal de detalle
+
+- **Resuelto:** 2026-07-20, versión `0.11.1.42`.
+- **Detectado/anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió.
+
+`populateEditFormFromTransaction()` (`static/script.js`) llamaba a `updateModalCategories()` (que
+a su vez llama a `updateModalSubCategories()`) ANTES de fijar `editCategory.value` a la categoría
+real de la transacción -- el `<select>` de subcategoría quedaba poblado para la categoría que
+hubiera antes (o ninguna, en la primera apertura de la sesión), no para la de la transacción que
+se estaba abriendo. Asignar `editSubCategory.value` justo después no seleccionaba nada, porque un
+`<select>` ignora en silencio un `value` que no coincide con ninguna de sus `<option>`. Que la
+segunda vez SÍ funcionara era casualidad de `prevCat` (la categoría que quedó fijada tras la
+apertura anterior). Fix: recalcular `updateModalSubCategories()` justo después de fijar
+`editCategory.value`, antes de asignar `editSubCategory.value`. Detalle completo en `CLAUDE.md`
+(ver el propio `CHANGELOG.md`, no tiene sección dedicada en `CLAUDE.md` por ser un fix puntual sin
+diseño nuevo que documentar).
+
 ### Propuesta #11: conciliación completa tipo "full outer join" — arqueo de caja
 
 - **Resuelto:** 2026-07-20, versión `0.11.0.41`.
