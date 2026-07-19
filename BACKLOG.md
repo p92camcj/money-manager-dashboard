@@ -47,42 +47,51 @@ las opciones más económicas de firma con reputación acumulada tipo SignPath p
 código abierto) eliminaría o reduciría mucho ambos problemas. No se ha hecho en esta tarea por ser
 un coste/proceso externo al código -- queda anotado para valorar si el proyecto gana tracción.
 
-### Propuesta #11 (gran alcance — no resolver en el mismo commit que las #8-#10): conciliación completa tipo "full outer join" — arqueo de caja
-
-- **Estado:** pendiente, alcance grande.
-- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
-
-Ahora mismo la conciliación solo resuelve un sentido: por cada fila del extracto bancario, busca
-su pareja en Money Manager (banco → MM). Falta el sentido contrario: dentro de la cuenta (o
-cuentas/tarjetas asociadas) y el rango de fechas del Excel subido, identificar las transacciones
-de Money Manager que NO tienen ninguna fila del banco con la que hacer match — movimientos
-"huérfanos" por el lado de MM (podrían ser gastos en efectivo, duplicados, errores de
-introducción manual, etc.).
-
-Objetivo final del usuario: un arqueo de caja real — descargar el extracto del banco del mes,
-elegir la cuenta correspondiente en MM, y que la conciliación muestre TODO: lo que coincide, lo
-que solo está en el banco (ya existe hoy), y lo que solo está en MM (no existe hoy), para poder
-verificar que fechas, importes y conceptos cuadran de verdad al 100% en ambos sentidos, no solo
-desde el punto de vista del banco.
-
-Requiere:
-(a) que el fichero tenga cuenta asociada (`account_ids`) para que tenga sentido delimitar el
-universo de transacciones de MM a comparar — sin cuenta asociada no hay un universo acotado
-contra el que buscar huérfanos;
-(b) una consulta a `getDataByPeriod` acotada a esa cuenta+periodo por completo, no solo las
-transacciones que ya salieron como candidatas de alguna fila del Excel (probablemente reutilizando
-`build_mm_dataframe()`, ver "Matching compartido entre ficheros de la misma tanda" en
-`CLAUDE.md`, ya que construye ese DataFrame completo por tanda);
-(c) una nueva categoría visual en la interfaz para estos huérfanos de MM, distinta de las
-categorías actuales (`exact_match`/`suggested_match`/`probable_match`/`new`), ya que
-conceptualmente van en el sentido contrario (MM → banco, no banco → MM).
-
-Es el cambio de mayor alcance de las cuatro propuestas anotadas en esta sesión — no intentar
-resolverlo en el mismo commit que las Propuestas #8, #9 o #10.
-
 ---
 
 ## Resueltos
+
+### Propuesta #11: conciliación completa tipo "full outer join" — arqueo de caja
+
+- **Resuelto:** 2026-07-20, versión `0.11.0.41`.
+- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
+
+Añade el sentido que faltaba a la conciliación (antes solo banco → MM): para cada fichero subido
+CON una o varias cuentas/tarjetas asociadas, localiza las transacciones de Money Manager dentro de
+esa cuenta y el periodo real de ESE fichero que ninguna fila del banco (de ningún fichero de la
+tanda) cubre. Diseño completo, decidido antes de escribir código, en `CLAUDE.md`, sección "Arqueo
+de caja: huérfanos de Money Manager sin equivalente en el extracto".
+
+`backend/reconciliation.py::find_mm_orphans()` reutiliza `build_mm_dataframe()` sin ampliarlo (ya
+trae todo lo necesario) y se calcula DESPUÉS del bucle de matching de toda la tanda -- una
+transacción cuenta como "consumida" solo si quedó `matched_origin`/`matched_destination` a `True`
+tras ese bucle, o si su id ya está en `data/reconciliations.json` de CUALQUIER sesión anterior (no
+solo de las conciliaciones recalculadas en esta petición -- si no, una transacción conciliada hace
+tiempo cuyo Excel original no se ha vuelto a subir hoy reaparecería como falso huérfano). Una
+transferencia con un solo lado presente en la tanda (el otro banco no se subió) aparece como
+huérfana por ese lado con `transfer_side` -- información real del arqueo, no un error. Salida:
+lista nueva `mm_orphans` en `/api/analyze-excel`, separada de `proposals` porque conceptualmente
+van en el sentido contrario. Frontend: sección nueva `#mmOrphansSection`, visualmente aparte de
+`#proposalsList`, más una barra de resumen `#reconciliationSummaryBar` con cuatro cifras de un
+vistazo.
+
+**Verificado contra el móvil real, no solo con un test sintético**: cuenta real "👬 Cta común
+casa" + su tarjeta vinculada "💳 👬 Casa", extracto real de `samples/` con 5 líneas eliminadas a
+propósito (en fechas intermedias del periodo, para no desplazar los límites de fecha del propio
+fichero), subido contra `/api/analyze-excel` real. Resultado: 41 huérfanos -- las 5 eliminadas a
+propósito (5/5 exactas por id) más 36 huérfanos reales preexistentes (en su mayoría prorrateos
+internos automáticos de Money Manager que nunca tienen movimiento bancario real). Las 2
+conciliaciones ya confirmadas de sesiones anteriores no reaparecieron como huérfanas. 6 huérfanos
+son transferencias internas con `transfer_side` correcto contra `assetId`/`destAssetId` reales,
+incluido un caso real de transferencia entrante desde una cuenta cuyo extracto no se subió en esta
+tanda.
+
+**Hallazgo colateral durante la propia verificación (no un bug, artefacto del primer intento de
+prueba)**: si se recortan a mano las filas más antiguas de un extracto (en vez de filas
+intermedias), el límite inferior del periodo del fichero se desplaza y "esconde" huérfanos
+anteriores a ese nuevo límite -- comportamiento correcto del diseño, porque un extracto bancario
+real siempre es contiguo (no tiene huecos como los que se introdujeron a mano en esa primera
+prueba); documentado como aclaración, no como limitación a corregir.
 
 ### Propuesta #10: "Ver Registro Asociado" como ventana modal con edición, en vez de navegar fuera de Conciliación
 

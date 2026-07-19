@@ -3,6 +3,43 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.11.0.41 - 2026-07-20
+
+Propuesta #11 del `BACKLOG.md` (arqueo de caja): la conciliación resolvía solo un sentido
+(banco → MM). Ahora, para cada fichero subido CON una o varias cuentas/tarjetas asociadas, también
+resuelve el sentido contrario -- dentro de esa cuenta y el periodo real de ese fichero, localiza
+las transacciones de Money Manager que ninguna fila del banco cubre. Detalle completo del diseño
+en `CLAUDE.md`, sección "Arqueo de caja: huérfanos de Money Manager sin equivalente en el
+extracto".
+
+- `backend/reconciliation.py::find_mm_orphans(mm_df, file_contexts, excluded_mm_ids)`: se calcula
+  DESPUÉS del bucle de matching de TODOS los ficheros de la tanda (para que un huérfano candidato
+  de un fichero pueda resolverse por el `exact_match` de otro fichero de la misma tanda), y solo
+  cuenta como "consumida" una transacción de MM si (a) quedó `matched_origin`/`matched_destination`
+  a `True` tras ese bucle, o (b) su id ya está en `data/reconciliations.json` -- de CUALQUIER
+  sesión anterior, no solo de las conciliaciones recalculadas en esta petición, para que una
+  transacción conciliada hace tiempo cuyo Excel original no se ha vuelto a subir hoy no reaparezca
+  como falso huérfano. Una transferencia con un solo lado presente en la tanda (p.ej. el otro
+  banco no se subió) aparece como huérfana por ese lado con `transfer_side` -- no se excluye, es
+  información real del arqueo.
+- `/api/analyze-excel` añade `mm_orphans` a la respuesta, junto a `proposals`.
+- Frontend: nueva sección `#mmOrphansSection` ("Movimientos en Money Manager sin equivalente en el
+  extracto"), separada visualmente de `#proposalsList` porque va en el sentido contrario, y una
+  barra de resumen `#reconciliationSummaryBar` con cuatro cifras de un vistazo (cuadran / por
+  revisar / solo en el banco / solo en Money Manager).
+
+**Verificado contra el móvil real** (no solo con un test sintético): usando la cuenta real
+"👬 Cta común casa" + su tarjeta vinculada "💳 👬 Casa" con un extracto real de `samples/`, se
+eliminaron a propósito 5 líneas concretas del extracto (en fechas intermedias del periodo, para no
+desplazar los límites de fecha del propio fichero) y se subió el fichero truncado contra
+`/api/analyze-excel` real. Resultado: 41 huérfanos detectados -- las 5 eliminadas a propósito
+(5/5, verificadas por id exacto) más 36 huérfanos reales preexistentes (en su mayoría prorrateos
+internos automáticos de Money Manager -- cuotas, seguros, ahorros mensuales -- que nunca tienen
+movimiento bancario real). Las 2 conciliaciones ya confirmadas en sesiones anteriores no
+reaparecieron como huérfanas. 6 de los huérfanos son transferencias internas con `transfer_side`
+correcto, verificado contra `assetId`/`destAssetId` reales, incluido un caso real de transferencia
+entrante desde otra cuenta cuyo extracto no se subió en esta tanda.
+
 ## 0.10.0.38 - 2026-07-19
 
 Propuesta #10 del `BACKLOG.md`: "Ver Registro Asociado" en Conciliación ya no navega a la pestaña

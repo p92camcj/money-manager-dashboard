@@ -4,6 +4,13 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.11.0.41 - 2026-07-20
+
+- Nuevo "arqueo de caja" en Conciliación: además de comparar el extracto del banco contra Money
+  Manager, ahora también avisa de los movimientos que están en Money Manager pero que no aparecen
+  en el extracto que has subido (gastos en efectivo, duplicados, cuotas internas...). Se muestran
+  en una sección aparte, con un resumen arriba de cuánto cuadra y cuánto falta por cada lado.
+
 ## 0.10.0.38 - 2026-07-19
 
 - En Conciliación, el botón "Ver Registro Asociado" ya no te saca de la pantalla donde estabas
