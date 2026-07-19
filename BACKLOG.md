@@ -47,6 +47,87 @@ las opciones más económicas de firma con reputación acumulada tipo SignPath p
 código abierto) eliminaría o reduciría mucho ambos problemas. No se ha hecho en esta tarea por ser
 un coste/proceso externo al código -- queda anotado para valorar si el proyecto gana tracción.
 
+### Propuesta #8: atenuar visualmente los matches exactos, resaltar los que tienen dudas
+
+- **Estado:** pendiente.
+- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
+
+En la tabla/lista de propuestas de conciliación, los registros con `exact_match` deben verse
+"apagados" (menor contraste, más discretos — son un check correcto, no necesitan atención del
+usuario), mientras que `suggested_match`/`probable_match`/`new` deben ser visualmente más
+llamativos, porque son los que requieren revisión manual. Cambio de CSS/render en el frontend
+(probablemente `style.css` + la función que pinta cada propuesta en `script.js`), sin lógica de
+backend nueva — los estados ya existen tal cual en la respuesta de `/api/analyze-excel`, solo
+cambia cómo se representan visualmente.
+
+### Propuesta #9 / Bug a investigar: confirmar una selección entre varias propuestas de match no persiste igual que un match automático
+
+- **Estado:** pendiente de diagnóstico — no asumir que hace falta rediseñar nada antes de
+  confirmar la causa.
+- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
+
+Ya existe el almacén de conciliaciones confirmadas (`data/reconciliations.json`, ver
+"Persistencia de conciliaciones confirmadas" en `CLAUDE.md`), usado para no repetir la misma
+ambigüedad al recargar un Excel que se solape en fechas con uno ya revisado. Pero al confirmar
+manualmente UNA opción entre varias propuestas de un registro con dudas
+(`suggested_match`/`probable_match`, donde el usuario elige entre varios `candidates`), si se
+vuelve a subir el mismo Excel, ese registro vuelve a aparecer con dudas en vez de mostrarse como
+`"reconciled"` ("Ya Conciliado") con el botón "Ver Registro Asociado" disponible.
+
+Antes de tocar nada: diagnosticar si el botón de confirmar en ese flujo concreto (candidato
+dentro de una lista de `candidates`, no el camino de `exact_match` único) realmente llama a
+`POST /api/reconciliations/confirm` igual que el otro camino, o si es un botón distinto que no
+llegó a conectarse al mismo endpoint cuando se implementó la persistencia. Probablemente sea un
+bug puntual de conexión frontend→backend en ese flujo concreto, no una funcionalidad que falte
+desde cero.
+
+### Propuesta #10: "Ver Registro Asociado" como ventana modal con edición, en vez de navegar fuera de Conciliación
+
+- **Estado:** pendiente.
+- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
+
+Actualmente el botón "Ver Registro Asociado" lleva a la pestaña de Transacciones con un filtro
+aplicado, perdiendo el contexto de dónde estaba el usuario en su revisión de conciliación
+(posición de scroll, filtro de etiqueta activo en `#proposalsFilterBar`). Debe abrir una ventana
+modal superpuesta con la información del registro en su lugar, idealmente con opción de editarlo
+directamente ahí (reutilizando el modal de edición de transacciones ya existente si encaja sin
+fricción), y al cerrarla, el usuario debe quedar exactamente donde estaba en su revisión de
+conciliación — misma posición de scroll, mismo filtro de etiqueta activo — para poder continuar
+sin perder el sitio.
+
+### Propuesta #11 (gran alcance — no resolver en el mismo commit que las #8-#10): conciliación completa tipo "full outer join" — arqueo de caja
+
+- **Estado:** pendiente, alcance grande.
+- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
+
+Ahora mismo la conciliación solo resuelve un sentido: por cada fila del extracto bancario, busca
+su pareja en Money Manager (banco → MM). Falta el sentido contrario: dentro de la cuenta (o
+cuentas/tarjetas asociadas) y el rango de fechas del Excel subido, identificar las transacciones
+de Money Manager que NO tienen ninguna fila del banco con la que hacer match — movimientos
+"huérfanos" por el lado de MM (podrían ser gastos en efectivo, duplicados, errores de
+introducción manual, etc.).
+
+Objetivo final del usuario: un arqueo de caja real — descargar el extracto del banco del mes,
+elegir la cuenta correspondiente en MM, y que la conciliación muestre TODO: lo que coincide, lo
+que solo está en el banco (ya existe hoy), y lo que solo está en MM (no existe hoy), para poder
+verificar que fechas, importes y conceptos cuadran de verdad al 100% en ambos sentidos, no solo
+desde el punto de vista del banco.
+
+Requiere:
+(a) que el fichero tenga cuenta asociada (`account_ids`) para que tenga sentido delimitar el
+universo de transacciones de MM a comparar — sin cuenta asociada no hay un universo acotado
+contra el que buscar huérfanos;
+(b) una consulta a `getDataByPeriod` acotada a esa cuenta+periodo por completo, no solo las
+transacciones que ya salieron como candidatas de alguna fila del Excel (probablemente reutilizando
+`build_mm_dataframe()`, ver "Matching compartido entre ficheros de la misma tanda" en
+`CLAUDE.md`, ya que construye ese DataFrame completo por tanda);
+(c) una nueva categoría visual en la interfaz para estos huérfanos de MM, distinta de las
+categorías actuales (`exact_match`/`suggested_match`/`probable_match`/`new`), ya que
+conceptualmente van en el sentido contrario (MM → banco, no banco → MM).
+
+Es el cambio de mayor alcance de las cuatro propuestas anotadas en esta sesión — no intentar
+resolverlo en el mismo commit que las Propuestas #8, #9 o #10.
+
 ---
 
 ## Resueltos
