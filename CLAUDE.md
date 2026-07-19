@@ -288,8 +288,10 @@ del usuario (1556 transferencias históricas reales encontradas en un rango de 1
 
 - Una transferencia es **una única fila** con `inOutCode: "3"`, `assetId` = cuenta origen,
   `toAssetId` = cuenta destino, `mbCash` **negativo** (importe visto desde la cuenta origen).
-  `targetAssetId` sale siempre como el string `"null"` — no se usa nunca en lectura (`toAssetId`
-  es el campo real; ver ambigüedad ya resuelta).
+  `targetAssetId` **no aparece en absoluto** en el XML de `getDataByPeriod` — no se usa nunca en
+  lectura (`toAssetId` es el campo real; ver ambigüedad ya resuelta). Reconfirmado 2026-07-19
+  sobre un rango real de un mes y medio (247 transacciones, 37 de ellas transferencias): cero
+  apariciones de `targetAssetId` en el XML completo, ni siquiera como texto literal `"null"`.
 - **`inOutType` para una transferencia es literalmente `"Dinero gastado"`, NUNCA
   `"Transferencia"` ni `"Transfer"`** — confirmado sobre 1556 filas reales, cero excepciones. Esto
   es lo que rompía `renderTransactions()`/`editTransaction()` en `static/script.js`: comparaban
@@ -548,12 +550,22 @@ cuentas/tarjetas que él mismo marcó.
   cada candidato de `candidates[]` lleva su propio `is_transfer`. El frontend usa esto para
   mostrar badges "🔁 Transferencia interna" y "⚠️ Fuera de la cuenta esperada" en vez de dejar que
   parezcan un duplicado exacto sin explicación.
-- **Transferencias entre BANCOS verificadas solo con datos sintéticos** (no hay en `samples/`
-  ningún par de extractos reales que compartan una transferencia entre bancos todavía) — ver
-  scripts de verificación usados durante el desarrollo, no comprometidos al repo. La detección de
-  transferencia en sí (`inOutCode`, campo `toAssetId`) sí está verificada contra el móvil real
-  (ver "Tabla de transacciones — transferencias" más abajo); lo que sigue siendo sintético es
-  específicamente el escenario de dos EXTRACTOS BANCARIOS reales compartiendo los dos lados.
+- **Transferencias entre bancos — verificado end-to-end contra el móvil real, 2026-07-19**: antes
+  solo se había probado con un script sintético (sin tocar el móvil ni `/api/analyze-excel`). Se
+  repitió la prueba usando una transferencia REAL ya existente en Money Manager (`-160.0€` del
+  2026-07-14, `id f57b26c7-311e-4760-96e8-394333e7ceac`, "SW Adrián" → "Cta común casa") y dos
+  ficheros CSV construidos con esa misma fecha/importe (uno por lado, `account_ids` = la cuenta de
+  cada lado), subidos en la misma tanda vía el test client de Flask contra `/api/analyze-excel`
+  real (`getDataByPeriod` real al móvil, no mockeado). Resultado: ambos ficheros resuelven
+  `exact_match` con confidence 100 contra el MISMO `suggested_mm_ref`
+  (`f57b26c7-311e-4760-96e8-394333e7ceac`), `account_fallback: false` en ambos, y `transfer_role`
+  correcto en cada lado (`"origen"` / `"destino"`) — sin colisión entre los dos ficheros de la
+  tanda, confirmando en vivo el diseño de `matched_origin`/`matched_destination` como columnas
+  separadas de la misma fila de `mm_df` compartido. Lo único que sigue sin probarse con extractos
+  bancarios 100% reales (no construidos a mano) es el formato de columnas exacto que usaría un
+  banco real para ese caso — pero la detección de transferencia, el campo `toAssetId`, y la
+  resolución de ambos lados sin colisión ya están confirmados contra datos reales de extremo a
+  extremo, no solo con un script sintético.
 
 ## Aviso de conexión perdida con el móvil
 

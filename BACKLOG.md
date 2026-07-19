@@ -431,19 +431,23 @@ Frontend: selector de cuenta (opcional) junto a la etiqueta de cada fichero pend
 badge "🔁 Transferencia interna" en las propuestas (y en cada candidato individual) que encajan con
 el lado de una transferencia, para distinguirlas visualmente de un duplicado exacto normal.
 
-**Verificado con datos sintéticos** (no con el móvil real ni con extractos reales de `samples/` —
-no hay ningún par de extractos reales con una transferencia compartida todavía): script ad-hoc
-(no comprometido al repo) que cubre (1) el fichero del banco origen encuentra la transferencia
-como `exact_match`/lado origen, (2) el fichero del banco destino encuentra la MISMA transacción
-como `exact_match`/lado destino sin colisión, (3) dentro del mismo fichero, dos líneas con igual
+**Verificado con datos sintéticos primero** (script ad-hoc no comprometido al repo, con XML de
+Money Manager simulado): (1) el fichero del banco origen encuentra la transferencia como
+`exact_match`/lado origen, (2) el fichero del banco destino encuentra la MISMA transacción como
+`exact_match`/lado destino sin colisión, (3) dentro del mismo fichero, dos líneas con igual
 importe no pueden reclamar el mismo lado dos veces, (4) el filtro estricto por cuenta evita un
 falso positivo con un movimiento de otra cuenta de importe idéntico, (5) sin `account_id` el
-comportamiento previo queda intacto. Además, verificado de extremo a extremo vía el test client de
-Flask (`/api/analyze-excel` con 2 ficheros + `accountIds` + XML de Money Manager simulado con una
-transferencia real). Pendiente de confirmar contra un caso real cuando el usuario tenga una
-transferencia entre bancos en extractos reales — en particular, qué campo (`toAssetId` vs
-`targetAssetId`) rellena de verdad el XML de `getDataByPeriod` (no verificado en vivo, ver nota en
-`CLAUDE.md`).
+comportamiento previo queda intacto.
+
+**Reconfirmado contra el móvil real, 2026-07-19** (sesión posterior, ver detalle completo en
+`CLAUDE.md` sección "Matching acotado por cuenta y transferencias entre bancos"): usando una
+transferencia REAL ya existente en Money Manager y dos ficheros CSV (uno por lado) subidos en la
+misma tanda vía `/api/analyze-excel` real (móvil real, no mockeado), ambos ficheros resuelven
+`exact_match` contra el mismo `suggested_mm_ref`, sin colisión, con `transfer_role` correcto en
+cada lado. También confirmado en esa misma consulta que el XML de `getDataByPeriod` usa
+`toAssetId` como campo real de cuenta destino — `targetAssetId` no aparece en absoluto (ni
+siquiera como `"null"`) en ninguna de las 37 transferencias reales de un rango de mes y medio
+consultado.
 
 ### Propuesta #3: soporte CSV y subida múltiple con etiqueta por fichero
 
