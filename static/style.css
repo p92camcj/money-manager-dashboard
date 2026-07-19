@@ -123,6 +123,7 @@ header { display: flex; justify-content: space-between; align-items: center; mar
 .amount { font-size: 2rem; font-weight: 600; margin-top: 10px; }
 .income-text { color: #10b981 !important; }
 .outcome-text { color: #f43f5e !important; }
+.text-muted { color: var(--text-muted) !important; }
 
 .charts-row { height: 350px; margin-top: 20px; }
 .chart-container { height: 100%; position: relative; }

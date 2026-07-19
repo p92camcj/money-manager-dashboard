@@ -98,6 +98,33 @@ limitación original persiste tal cual estaba documentada.
 
 ## Resueltos
 
+### Bug #4: las transferencias internas de Money Manager no se distinguían en la tabla de Transacciones, y editarlas las rompía
+
+- **Resuelto:** 2026-07-19, versión `0.8.3.30`.
+- **Detectado:** 2026-07-19 (misma sesión de trabajo en la que se resolvió).
+
+`renderTransactions()`/`editTransaction()` en `static/script.js` comparaban
+`t.inOutType === 'Transferencia'` para detectar una transferencia, pero se confirmó contra el
+móvil real (1556 transferencias históricas reales) que ese texto nunca aparece en lectura — el
+valor real es `"Dinero gastado"`. La señal fiable es `inOutCode` (`"3"`/`"4"`), no el texto.
+Consecuencia: las transferencias se mostraban en la tabla como si fueran Gasto/Ingreso normales
+(coloreadas, con categoría/subcategoría sin sentido), y al editar una se abría el modal
+clasificada como Ingreso, sin la cuenta destino.
+
+**Hallazgo más grave, verificado creando/editando/borrando transferencias de prueba reales**: el
+dashboard guardaba y editaba transferencias mandándolas a `moneyBook/create`/`update` con
+`targetAssetId` — el móvil respondía `{success:true}` pero la cuenta destino se guardaba como
+`null`, una transferencia rota de forma silenciosa e indistinguible de un éxito para el usuario.
+El mecanismo real, extraído de `reference/all_mm.js` y verificado en vivo, es un endpoint
+totalmente distinto: `moneyBook/moveAsset` (crear) / `moneyBook/modifyMoveAsset` (editar), con
+campos `fromAssetId`/`toAssetId`/`moveMoney`/`moneyContent` (no `assetId`/`targetAssetId`/
+`mbCash`/`mbContent`). Esto significa que cualquier transferencia creada o editada desde este
+dashboard antes de este fix pudo perder su vínculo con la cuenta destino, sin ningún aviso.
+
+Detalle completo del mecanismo verificado (incluida la peculiaridad de que el `id` de una
+transferencia cambia tras cada edición) en `CLAUDE.md`, sección "Transferencias internas de Money
+Manager".
+
 ### Bug #2: categoría y subcategoría no se guardan al crear una transacción desde "Pre-rellenar y Añadir"
 
 - **Resuelto:** 2026-07-19, versión `0.8.2.29`.

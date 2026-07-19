@@ -2,6 +2,33 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.8.3.30 - 2026-07-19
+
+Corrección de bug (Tarea 2 de una sesión de trabajo): las transferencias internas de Money
+Manager no se distinguían en la tabla de Transacciones, y editarlas realmente las rompía.
+Detalle completo del mecanismo verificado en `CLAUDE.md`, sección "Transferencias internas de
+Money Manager".
+
+- **Diagnóstico real contra el móvil**: `inOutType` para una transferencia leída con
+  `getDataByPeriod` es literalmente `"Dinero gastado"`, nunca `"Transferencia"` (confirmado sobre
+  1556 transferencias históricas reales) -- por eso `renderTransactions()`/`editTransaction()`
+  nunca detectaban una transferencia como tal. Ahora se detecta por `inOutCode` (`"3"`/`"4"`), la
+  señal fiable.
+- **`renderTransactions()`**: una transferencia se muestra con importe en color neutro (se añadió
+  la clase `.text-muted` a `style.css`, que no existía) y, en vez de categoría/subcategoría, un
+  badge "🔁 Transferencia" y la cuenta destino resuelta con `getAssetName()`.
+- **`editTransaction()`**: precargaba mal una transferencia real (cayía en la rama "Ingreso" por
+  el mismo motivo de arriba, y nunca rellenaba la cuenta destino). Ahora detecta el tipo por
+  `inOutCode` y precarga ambas cuentas correctamente.
+- **Hallazgo más grave, verificado con transferencias de prueba reales creadas/editadas/borradas**:
+  el dashboard guardaba y editaba transferencias mandándolas a `moneyBook/create`/`update` con
+  `targetAssetId` -- el móvil respondía `{success:true}` pero la cuenta destino se guardaba como
+  `null`, una transferencia rota de forma silenciosa. El mecanismo real es un endpoint totalmente
+  distinto (`moneyBook/moveAsset` para crear, `moneyBook/modifyMoveAsset` para editar, campos
+  `fromAssetId`/`toAssetId`/`moveMoney`/`moneyContent`), extraído de `reference/all_mm.js` y
+  verificado en vivo. Nueva función `submitTransfer()` en `static/script.js`, a la que
+  `submitTransaction()` delega para el tipo Transferencia.
+
 ## 0.8.2.29 - 2026-07-19
 
 Corrección de bug (Bug #2 de `BACKLOG.md`), verificada contra el móvil real con transacciones de

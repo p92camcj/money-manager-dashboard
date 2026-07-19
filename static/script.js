@@ -373,11 +373,16 @@ function renderTransactions() {
 
     body.innerHTML = filtered.length ? '' : '<tr><td colspan="6" style="text-align:center; padding:40px;">Sin movimientos registrados</td></tr>';
     filtered.forEach(t => {
+        // Una transferencia interna de Money Manager NO se lee con inOutType "Transferencia" --
+        // se confirmó contra el móvil real (2026-07-19, ver CLAUDE.md) que el texto real es
+        // "Dinero gastado" para inOutCode "3" (el único observado en datos reales; "4" es el lado
+        // invertido, contemplado por Money Manager pero nunca visto en 10 años de datos reales).
+        // inOutCode es la señal fiable, no el texto de inOutType.
+        const isTrans = t.inOutCode === '3' || t.inOutCode === '4';
         const isInc = t.inOutType === 'Ingreso';
-        const isTrans = t.inOutType === 'Transferencia';
         let amountText = formatCurrency(t.mbCash);
         let amountClass = isTrans ? 'text-muted' : (isInc ? 'income-text' : 'outcome-text');
-        
+
         // Manejar separación de hora si mbDate contiene espacio (ej: "2026-03-27 10:30")
         let dateObj = t.mbDate ? t.mbDate.split(' ') : [''];
         let datePart = dateObj[0];
@@ -386,14 +391,27 @@ function renderTransactions() {
         // Recuperar nombre de cuenta real cruzando assetId con la lista de activos
         let accountName = getAssetName(t.assetId, t.assetName);
 
+        // Para una transferencia, categoría/subcategoría no aplican -- se muestra origen/destino
+        // en su lugar (origen ya se ve en la columna "Cuenta Origen" vía accountName).
+        let categoryCell, subCategoryCell;
+        if (isTrans) {
+            const origin = t.inOutCode === '4' ? t.toAssetId : t.assetId;
+            const dest = t.inOutCode === '4' ? t.assetId : t.toAssetId;
+            categoryCell = `<span class="badge badge-info" title="Transferencia entre cuentas propias de Money Manager">🔁 Transferencia</span>`;
+            subCategoryCell = `<span class="badge subcategory-badge" title="Cuenta destino">→ ${getAssetName(dest, '')}</span>`;
+        } else {
+            categoryCell = `<span class="badge category-badge" onclick="applyFilter('${t.mbCategory}', null)" title="${t.mbCategory}">${t.mbCategory}</span>`;
+            subCategoryCell = `<span class="badge subcategory-badge" onclick="applyFilter('${t.mbCategory}', '${t.subCategory}')" title="${t.subCategory || '-'}">${t.subCategory || '-'}</span>`;
+        }
+
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td>
                 <div>${datePart}</div>
                 ${timePart ? `<div style="font-size:0.7rem; color:var(--text-muted)">🕒 ${timePart}</div>` : ''}
             </td>
-            <td><span class="badge category-badge" onclick="applyFilter('${t.mbCategory}', null)" title="${t.mbCategory}">${t.mbCategory}</span></td>
-            <td><span class="badge subcategory-badge" onclick="applyFilter('${t.mbCategory}', '${t.subCategory}')" title="${t.subCategory || '-'}">${t.subCategory || '-'}</span></td>
+            <td>${categoryCell}</td>
+            <td>${subCategoryCell}</td>
             <td onclick="editTransaction('${t.id}')" style="cursor:pointer;" title="Ver/Editar Detalles"><div>${t.mbContent}</div><div style="font-size:0.7rem; color:var(--text-muted)">${t.mbDetailContent || ''}</div></td>
             <td><div style="font-size:0.8rem">${accountName}</div></td>
             <td class="${amountClass}" style="text-align:right; font-weight:600">${amountText}</td>
@@ -544,7 +562,13 @@ window.onclick = function(event) {
 async function editTransaction(tId) {
     let t = transactionsData.find(x => String(x.id) === String(tId));
     if (!t) return;
-    
+
+    // inOutCode es la señal fiable de que es una transferencia, no el texto de inOutType (ver
+    // renderTransactions() y CLAUDE.md -- el texto real de lectura es "Dinero gastado", nunca
+    // "Transferencia"/"Transfer"). Con el mapeo antiguo, editar una transferencia real abría el
+    // modal como si fuera un Ingreso.
+    const isTrans = t.inOutCode === '3' || t.inOutCode === '4';
+
     let datePart = '', timePart = '12:00';
     if(t.mbDate) {
         let parts = t.mbDate.includes('T') ? t.mbDate.split('T') : t.mbDate.split(' ');
@@ -553,27 +577,35 @@ async function editTransaction(tId) {
             timePart = parts[1].substring(0,5);
         }
     }
-    
+
     openEditModal(tId);
-    
-    document.getElementById('editType').value = t.inOutType === 'Gasto' || t.inOutType === 'Egreso' ? 'Gasto' : 
-                                               (t.inOutType === 'Transfer' || t.inOutType === 'Transferencia' ? 'Transferencia' : 'Ingreso');
-    
+
+    document.getElementById('editType').value = isTrans ? 'Transferencia' : (t.inOutType === 'Ingreso' ? 'Ingreso' : 'Gasto');
+
     updateModalCategories();
-    
+
     if (datePart) document.getElementById('editDate').value = datePart;
     document.getElementById('editTime').value = timePart;
-    
+
     document.getElementById('editAmount').value = Math.abs(t.mbCash || 0.0);
     document.getElementById('editContent').value = t.mbContent || '';
     if (document.getElementById('editDetailContent')) {
         document.getElementById('editDetailContent').value = t.mbDetailContent || '';
     }
-    
-    if (t.assetId) document.getElementById('editAccount').value = t.assetId;
-    
-    if (t.mbCategory) document.getElementById('editCategory').value = t.mbCategory;
-    if (t.subCategory) document.getElementById('editSubCategory').value = t.subCategory;
+
+    if (isTrans) {
+        // inOutCode "3" (el único observado en datos reales): assetId = cuenta origen, toAssetId
+        // = cuenta destino. "4" es el lado invertido que contempla el propio Money Manager
+        // (reference/moneybook.js) aunque no se haya observado nunca en datos reales.
+        const originId = t.inOutCode === '4' ? t.toAssetId : t.assetId;
+        const destId = t.inOutCode === '4' ? t.assetId : t.toAssetId;
+        if (originId) document.getElementById('editAccount').value = originId;
+        if (destId) document.getElementById('editTargetAccount').value = destId;
+    } else {
+        if (t.assetId) document.getElementById('editAccount').value = t.assetId;
+        if (t.mbCategory) document.getElementById('editCategory').value = t.mbCategory;
+        if (t.subCategory) document.getElementById('editSubCategory').value = t.subCategory;
+    }
 }
 
 async function deleteTransaction(tId) {
@@ -688,54 +720,61 @@ function updateModalSubCategories() {
 }
 
 async function submitTransaction() {
+    const typeStr = document.getElementById('editType').value;
+
+    // Una transferencia NO se crea/edita con moneyBook/create-update (Bug de Tarea 2, ver
+    // BACKLOG.md y CLAUDE.md) -- Money Manager usa un endpoint y unos nombres de campo
+    // completamente distintos (moneyBook/moveAsset y moneyBook/modifyMoveAsset, confirmado
+    // contra reference/all_mm.js y contra el móvil real). Enviar una transferencia por
+    // moneyBook/create (como se hacía antes) "tenía éxito" pero guardaba la cuenta destino como
+    // null -- una transferencia rota, silenciosamente.
+    if (typeStr === 'Transferencia') {
+        return submitTransfer();
+    }
+
     // Forzamos la decodificación tipo application/x-www-form-urlencoded para el API heredada
     const payload = new URLSearchParams();
-    const typeStr = document.getElementById('editType').value;
-    
-    // inOutCode confirmado contra el móvil real (Bug #2, BACKLOG.md): "0"=Ingreso, "1"=Gasto,
-    // "3"=Transferencia (lado origen) -- reference/moneybook.js ya apuntaba a este mapeo, y el
-    // mapeo previo ('Ingreso': '2') se confirmó roto: el móvil respondía {success:true} pero la
-    // transacción nunca llegaba a persistir (invisible incluso en un rango de 10 años completo).
-    // inOutType (el texto) se confirmó puramente cosmético: el móvil deriva el inOutType real de
-    // lectura ("Gasto"/"Ingreso") a partir de inOutCode, no del texto recibido -- se sigue
-    // enviando el nombre en español tal cual para no depender de esa asunción indefinidamente.
-    let inOutCodeMap = {'Gasto': '1', 'Ingreso': '0', 'Transferencia': '3'};
+
+    // inOutCode confirmado contra el móvil real (Bug #2, BACKLOG.md): "0"=Ingreso, "1"=Gasto --
+    // el mapeo previo ('Ingreso': '2') se confirmó roto: el móvil respondía {success:true} pero
+    // la transacción nunca llegaba a persistir (invisible incluso en un rango de 10 años
+    // completo). inOutType (el texto) se confirmó puramente cosmético: el móvil deriva el
+    // inOutType real de lectura ("Gasto"/"Ingreso") a partir de inOutCode, no del texto recibido
+    // -- se sigue enviando el nombre en español tal cual para no depender de esa asunción
+    // indefinidamente.
+    let inOutCodeMap = {'Gasto': '1', 'Ingreso': '0'};
 
     payload.append('inOutType', typeStr);
     payload.append('inOutCode', inOutCodeMap[typeStr] || '1');
     payload.append('mbDate', `${document.getElementById('editDate').value} ${document.getElementById('editTime').value}:00`);
     payload.append('mbContent', document.getElementById('editContent').value);
-    
+
     const dContent = document.getElementById('editDetailContent') ? document.getElementById('editDetailContent').value : '';
     if (dContent) payload.append('mbDetailContent', dContent);
-    
+
     payload.append('mbCash', document.getElementById('editAmount').value);
-    
+
     let accountId = document.getElementById('editAccount').value;
     payload.append('assetId', accountId);
     payload.append('payType', getAssetName(accountId, ''));
-    
-    if (typeStr === 'Transferencia') {
-        payload.append('targetAssetId', document.getElementById('editTargetAccount').value);
-    } else {
-    const cat = document.getElementById('editCategory').value;
-        const sub = document.getElementById('editSubCategory').value;
-        if (cat) payload.append('mbCategory', cat);
-        if (sub) payload.append('subCategory', sub);
 
-        // Bug #2 (BACKLOG.md): el móvil ignora mbCategory/subCategory si no van acompañados
-        // del mcid/mcscid real -- sin ellos guarda mbCategory literalmente como "None". Se
-        // resuelve por nombre contra categoryMapData (ver fetchCategoryMap()).
-        const catMap = (typeStr === 'Ingreso' ? categoryMapData.income : categoryMapData.expense) || {};
-        const catEntry = catMap[cat];
-        if (catEntry) {
-            payload.append('mcid', catEntry.mcid);
-            if (sub && catEntry.subs[sub]) {
-                payload.append('mcscid', catEntry.subs[sub]);
-            }
-        } else if (cat) {
-            console.warn('[submitTransaction] No se encontró mcid para la categoría', cat, '-- puede no guardarse correctamente. ¿Se ha sincronizado categoryMapData?');
+    const cat = document.getElementById('editCategory').value;
+    const sub = document.getElementById('editSubCategory').value;
+    if (cat) payload.append('mbCategory', cat);
+    if (sub) payload.append('subCategory', sub);
+
+    // Bug #2 (BACKLOG.md): el móvil ignora mbCategory/subCategory si no van acompañados
+    // del mcid/mcscid real -- sin ellos guarda mbCategory literalmente como "None". Se
+    // resuelve por nombre contra categoryMapData (ver fetchCategoryMap()).
+    const catMap = (typeStr === 'Ingreso' ? categoryMapData.income : categoryMapData.expense) || {};
+    const catEntry = catMap[cat];
+    if (catEntry) {
+        payload.append('mcid', catEntry.mcid);
+        if (sub && catEntry.subs[sub]) {
+            payload.append('mcscid', catEntry.subs[sub]);
         }
+    } else if (cat) {
+        console.warn('[submitTransaction] No se encontró mcid para la categoría', cat, '-- puede no guardarse correctamente. ¿Se ha sincronizado categoryMapData?');
     }
 
     if (currentEditingId) {
@@ -778,6 +817,69 @@ async function submitTransaction() {
             alert("Error al guardar: " + resp.status + " | " + text);
         }
     } catch(e) {
+        alert("Error de conexión al guardar: " + e.message);
+    }
+}
+
+// Crea/edita una transferencia entre cuentas propias de Money Manager. Endpoint y campos
+// verificados contra reference/all_mm.js (formulario assetMoveForm) y confirmados contra el
+// móvil real (Tarea 2, BACKLOG.md): moneyBook/create-update NO sirve para esto -- "tenía éxito"
+// pero guardaba la cuenta destino (toAssetId) como null. moveDate es solo fecha (sin hora, a
+// diferencia de mbDate) -- así es como el propio Money Manager guarda sus transferencias.
+async function submitTransfer() {
+    const payload = new URLSearchParams();
+
+    const fromAssetId = document.getElementById('editAccount').value;
+    const toAssetId = document.getElementById('editTargetAccount').value;
+    const amount = document.getElementById('editAmount').value;
+    const content = document.getElementById('editContent').value;
+    const moveDate = document.getElementById('editDate').value;
+
+    if (!moveDate || !fromAssetId || !toAssetId || !amount || !content) {
+        alert("Por favor, completa todos los campos obligatorios.");
+        return;
+    }
+    if (fromAssetId === toAssetId) {
+        alert("La cuenta origen y la cuenta destino no pueden ser la misma.");
+        return;
+    }
+
+    payload.append('moveDate', moveDate);
+    payload.append('fromAssetId', fromAssetId);
+    payload.append('fromAssetName', getAssetName(fromAssetId, ''));
+    payload.append('toAssetId', toAssetId);
+    payload.append('toAssetName', getAssetName(toAssetId, ''));
+    payload.append('moveMoney', amount);
+    payload.append('moneyContent', content);
+
+    const dContent = document.getElementById('editDetailContent') ? document.getElementById('editDetailContent').value : '';
+    if (dContent) payload.append('mbDetailContent', dContent);
+
+    let endpoint;
+    if (currentEditingId) {
+        payload.append('id', currentEditingId);
+        endpoint = '/api/proxy/moneyBook/modifyMoveAsset';
+    } else {
+        endpoint = '/api/proxy/moneyBook/moveAsset';
+    }
+
+    try {
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: payload.toString()
+        });
+
+        const text = await resp.text();
+        if (text === 'true' || text.includes('success:true') || text.includes('success') || resp.ok) {
+            closeModal();
+            await fetchTransactions();
+            renderTransactions();
+            alert(currentEditingId ? "Transferencia modificada." : "Transferencia añadida exitosamente.");
+        } else {
+            alert("Error al guardar la transferencia: " + resp.status + " | " + text);
+        }
+    } catch (e) {
         alert("Error de conexión al guardar: " + e.message);
     }
 }

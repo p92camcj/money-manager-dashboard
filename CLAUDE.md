@@ -263,10 +263,71 @@ para adjuntar `mcid`/`mcscid` junto al nombre.
     este fix, **cualquier transacción de tipo Ingreso creada desde este dashboard pudo no haberse
     guardado nunca**, aunque la UI mostrara "Transacción añadida exitosamente" — no se detectó
     antes porque no había ningún log que comparara lo enviado con lo realmente persistido.
-  - `inOutCode` para Transferencia (`'3'`) no se tocó en este fix — sigue pendiente de verificar a
-    fondo, ver "Tabla de transacciones — transferencias" más abajo.
+  - `inOutCode` para Transferencia (`'3'`) se documenta a fondo en "Transferencias internas de
+    Money Manager" más abajo — lectura y escritura son un mecanismo totalmente aparte de
+    `create`/`update`.
 
 `delete` espera `ids` con prefijo `:` — ejemplo: `ids=:<id_transaccion>`.
+
+### Transferencias internas de Money Manager
+
+Verificado contra el móvil real (2026-07-19, Tarea 2 de una sesión de trabajo) sobre datos reales
+del usuario (1556 transferencias históricas reales encontradas en un rango de 10 años) y contra
+`reference/all_mm.js`. Sustituye cualquier suposición anterior no verificada sobre este punto.
+
+**Lectura (`getDataByPeriod`) — modelo de una sola fila, `inOutType` NO es `"Transferencia"`:**
+
+- Una transferencia es **una única fila** con `inOutCode: "3"`, `assetId` = cuenta origen,
+  `toAssetId` = cuenta destino, `mbCash` **negativo** (importe visto desde la cuenta origen).
+  `targetAssetId` sale siempre como el string `"null"` — no se usa nunca en lectura (`toAssetId`
+  es el campo real; ver ambigüedad ya resuelta).
+- **`inOutType` para una transferencia es literalmente `"Dinero gastado"`, NUNCA
+  `"Transferencia"` ni `"Transfer"`** — confirmado sobre 1556 filas reales, cero excepciones. Esto
+  es lo que rompía `renderTransactions()`/`editTransaction()` en `static/script.js`: comparaban
+  `t.inOutType === 'Transferencia'`, una condición que nunca era cierta con datos reales. La señal
+  fiable es **`inOutCode`**, no el texto de `inOutType` (coherente con que `inOutType` ya se
+  demostró puramente cosmético en la sección anterior).
+- `inOutCode: "4"` (el lado invertido: `assetId` = destino, `toAssetId` = origen, `mbCash`
+  positivo) existe en el código del cliente oficial (`reference/moneybook.js`,
+  `reference/all_mm.js`) pero **nunca se ha observado en datos reales** (0 de 1556). El código de
+  este proyecto lo contempla defensivamente (mirando de qué lado está `assetId`/`toAssetId` según
+  el código) pero no se ha podido probar en vivo.
+- `mbCategory` se rellena automáticamente (por el propio Money Manager, no por este proyecto) con
+  el **nombre de la cuenta destino** como conveniencia — no es una categoría real, `mcid`/`mcscid`
+  salen como el string `"null"`. No confiar en este campo para mostrar la cuenta destino; se
+  resuelve independientemente con `getAssetName(t.toAssetId)`.
+
+**Escritura — endpoint y campos TOTALMENTE DISTINTOS de `moneyBook/create`/`update`:**
+
+Antes de esta tarea, `static/script.js:submitTransaction()` enviaba las transferencias a
+`moneyBook/create`/`update` con `targetAssetId`. Se confirmó contra el móvil real que esto **no
+funciona**: la petición responde `{success:true}` pero la transacción resultante guarda
+`toAssetId` como el string `"null"` — una transferencia sin cuenta destino, silenciosamente rota,
+indistinguible de un éxito para el usuario.
+
+El mecanismo real (extraído de `reference/all_mm.js`, formulario `assetMoveForm`, y verificado
+creando/editando/borrando transferencias de prueba reales):
+
+- **Crear**: `POST moneyBook/moveAsset` con `moveDate` (solo fecha, `YYYY-MM-DD`, SIN hora — a
+  diferencia de `mbDate` que sí lleva hora), `fromAssetId`, `fromAssetName` (nombre de la cuenta
+  origen), `toAssetId`, `toAssetName` (nombre de la cuenta destino), `moveMoney` (importe en
+  positivo — el signo negativo de `mbCash` en lectura lo aplica el propio Money Manager), y
+  `moneyContent` (⚠️ NO `mbContent` — nombre de campo distinto solo para este endpoint). Opcional:
+  `mbDetailContent` (este sí con el mismo nombre que en `create`/`update`).
+- **Editar**: `POST moneyBook/modifyMoveAsset`, mismos campos más `id` (el id de la transacción a
+  editar). **El `id` de la transacción CAMBIA tras cada edición** — verificado creando una
+  transferencia, editándola una vez, y comprobando que el id original ya no existe y aparece uno
+  nuevo con los datos editados. Cualquier código que dependa de reutilizar el mismo id después de
+  editar una transferencia (p. ej. para reabrir la fila recién guardada) se rompería; por eso
+  `submitTransfer()` en `static/script.js` no intenta mostrar la fila recién editada por id
+  después de guardar, solo refresca la tabla entera.
+- La respuesta de `modifyMoveAsset` puede ser un **cuerpo vacío con HTTP 200** (no
+  `{success:true}` como en `create`/`moveAsset`) — sigue siendo éxito, verificado comprobando el
+  resultado real con `getDataByPeriod` tras la llamada. El chequeo de éxito ya usado en el
+  proyecto (`resp.ok` como condición de respaldo) lo cubre sin cambios.
+- `static/script.js` implementa esto en `submitTransfer()`, separado de `submitTransaction()`
+  (que ahora solo maneja Gasto/Ingreso) — `submitTransaction()` delega a `submitTransfer()` en
+  cuanto detecta `typeStr === 'Transferencia'`.
 
 ## Parseo de extractos bancarios (multi-banco)
 
