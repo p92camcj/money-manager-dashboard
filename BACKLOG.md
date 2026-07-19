@@ -47,27 +47,6 @@ las opciones más económicas de firma con reputación acumulada tipo SignPath p
 código abierto) eliminaría o reduciría mucho ambos problemas. No se ha hecho en esta tarea por ser
 un coste/proceso externo al código -- queda anotado para valorar si el proyecto gana tracción.
 
-### Propuesta #9 / Bug a investigar: confirmar una selección entre varias propuestas de match no persiste igual que un match automático
-
-- **Estado:** pendiente de diagnóstico — no asumir que hace falta rediseñar nada antes de
-  confirmar la causa.
-- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
-
-Ya existe el almacén de conciliaciones confirmadas (`data/reconciliations.json`, ver
-"Persistencia de conciliaciones confirmadas" en `CLAUDE.md`), usado para no repetir la misma
-ambigüedad al recargar un Excel que se solape en fechas con uno ya revisado. Pero al confirmar
-manualmente UNA opción entre varias propuestas de un registro con dudas
-(`suggested_match`/`probable_match`, donde el usuario elige entre varios `candidates`), si se
-vuelve a subir el mismo Excel, ese registro vuelve a aparecer con dudas en vez de mostrarse como
-`"reconciled"` ("Ya Conciliado") con el botón "Ver Registro Asociado" disponible.
-
-Antes de tocar nada: diagnosticar si el botón de confirmar en ese flujo concreto (candidato
-dentro de una lista de `candidates`, no el camino de `exact_match` único) realmente llama a
-`POST /api/reconciliations/confirm` igual que el otro camino, o si es un botón distinto que no
-llegó a conectarse al mismo endpoint cuando se implementó la persistencia. Probablemente sea un
-bug puntual de conexión frontend→backend en ese flujo concreto, no una funcionalidad que falte
-desde cero.
-
 ### Propuesta #10: "Ver Registro Asociado" como ventana modal con edición, en vez de navegar fuera de Conciliación
 
 - **Estado:** pendiente.
@@ -118,6 +97,37 @@ resolverlo en el mismo commit que las Propuestas #8, #9 o #10.
 ---
 
 ## Resueltos
+
+### Bug #9: confirmar una selección entre varias propuestas de match no persiste igual que un match automático
+
+- **Resuelto:** 2026-07-19, versión `0.9.2.36`.
+- **Detectado/anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en
+  producción.
+
+**Diagnóstico primero, tal y como pedía este ítem** — ambas hipótesis sobre el backend
+descartadas con datos reales, no solo en teoría:
+1. `make_key()` es determinista: reproducido con los dos valores reales ya confirmados en
+   `data/reconciliations.json` (logueados en `logs/app.log`), el hash coincide exactamente con
+   la clave ya almacenada.
+2. La sobreescritura a `'reconciled'` en `analyze_excel()` (`app.py`) se aplica de forma
+   incondicional a CUALQUIER estado, no solo a `exact_match` — verificado de extremo a extremo
+   con el test client de Flask (subir CSV con fila ambigua de 2 candidatos, confirmar uno,
+   re-subir el mismo CSV: la fila sale correctamente como `reconciled`).
+
+**Causa real, en el frontend**: `confirmMatch()` en `static/script.js` solo atenuaba la tarjeta
+en el DOM (opacity + ocultar candidatos), sin actualizar el objeto `proposal` dentro de
+`lastProposals` — verificado en navegador real (Playwright) contra el código anterior: justo
+tras confirmar, el badge seguía diciendo "Posible Coincidencia" (solo atenuado), y cualquier
+re-render posterior en la misma sesión sin volver a pedir datos al backend (p.ej. cambiar el
+filtro de etiqueta) reconstruía la tarjeta con dudas y los botones "Confirmar Este" activos otra
+vez, aunque el backend ya la tuviera persistida.
+
+**Fix**: `confirmMatch()` actualiza ahora `proposal.status`/`confidence`/`suggested_mm_ref`/
+`candidates` con el mismo resultado que calcularía `analyze_excel()` al re-analizar, y vuelve a
+renderizar. Verificado en navegador real (Playwright): reproducido el fallo contra el código
+anterior con `git stash` (la tarjeta seguía en "Posible Coincidencia" tras confirmar) y
+confirmado que desaparece con el fix (pasa a "Ya Conciliado" al instante y se mantiene así tras
+forzar un re-render).
 
 ### Propuesta #8: atenuar visualmente los matches exactos, resaltar los que tienen dudas
 

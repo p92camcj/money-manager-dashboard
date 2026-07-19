@@ -1211,10 +1211,6 @@ function showTransaction(id) {
 }
 
 async function confirmMatch(sourceId, candId) {
-    // Capturar referencias antes del await: el objeto global `event` no sobrevive de forma fiable tras un await
-    const card = event.target.closest('.proposal-card');
-    const list = event.target.closest('ul');
-
     const proposal = lastProposals.find(p => p.source_id === sourceId);
     if (!proposal) {
         alert("No se encontró la propuesta original (¿recargaste la página desde el último análisis?). Vuelve a subir el Excel.");
@@ -1237,9 +1233,23 @@ async function confirmMatch(sourceId, candId) {
             alert("Error al confirmar el match: " + (data.error || resp.status));
             return;
         }
-        // Match enlazado localmente (NUNCA se escribe en el móvil). Ocultar visualmente.
-        if (card) card.style.opacity = '0.4';
-        if (list) list.style.display = 'none';
+        // Match enlazado localmente (NUNCA se escribe en el móvil). Bug #9 (BACKLOG.md): antes
+        // solo se atenuaba la tarjeta en el DOM directamente (opacity + ocultar la lista de
+        // candidatos), sin actualizar `proposal` dentro de `lastProposals` -- el badge seguía
+        // diciendo "Posible Coincidencia" incluso justo después de confirmar, y cualquier
+        // re-render posterior en la misma sesión sin volver a pedir datos al backend (p.ej.
+        // cambiar el filtro de etiqueta en `#proposalsFilterBar`) reconstruía la tarjeta desde
+        // el estado viejo y la mostraba otra vez con dudas y los botones "Confirmar Este"
+        // activos, aunque el backend ya la tuviera persistida como conciliada (verificado que el
+        // backend en sí -- make_key() y la sobreescritura a 'reconciled' en analyze_excel() --
+        // ya funcionaba correctamente; el estado desincronizado vivía solo aquí). Replicamos el
+        // mismo resultado que calcularía analyze_excel() al re-analizar (ver app.py) para que el
+        // estado local quede coherente con el del backend en cualquier re-render.
+        proposal.status = 'reconciled';
+        proposal.confidence = 100;
+        proposal.suggested_mm_ref = candId;
+        proposal.candidates = [];
+        renderProposalsList();
     } catch (e) {
         alert("Error crítico confirmando match: " + e.message);
     }

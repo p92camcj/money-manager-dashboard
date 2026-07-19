@@ -4,6 +4,12 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.9.2.36 - 2026-07-19
+
+- Al confirmar manualmente cuál de varias propuestas de conciliación es la correcta, ahora se
+  refleja al instante como "Ya Conciliado" (antes, en algunos casos, seguía viéndose como
+  pendiente de revisar aunque ya se hubiera guardado la elección).
+
 ## 0.9.1.35 - 2026-07-19
 
 - En la conciliación bancaria, los movimientos que ya coinciden perfectamente ahora se ven más

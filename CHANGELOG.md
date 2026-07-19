@@ -3,6 +3,39 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.9.2.36 - 2026-07-19
+
+Bug #9 del `BACKLOG.md`: confirmar una selección entre varias propuestas de conciliación no se
+reflejaba como conciliada al instante, aunque el backend ya la tuviera persistida correctamente.
+
+**Diagnóstico** (antes de tocar nada, per instrucción explícita): se descartaron ambas hipótesis
+del backlog sobre el backend con datos reales, no solo en teoría:
+- `make_key()` es determinista y consistente: se reprodujo con los DOS valores reales ya
+  guardados en `data/reconciliations.json` (fecha/importe/descripción exactos logueados en
+  `logs/app.log` al confirmarlos) y el hash coincide byte a byte con la clave ya almacenada.
+- La sobreescritura a `'reconciled'` en `analyze_excel()` (`app.py`) se aplica de forma
+  incondicional a CUALQUIER propuesta, no solo a las de `exact_match` -- verificado con un caso
+  sintético de extremo a extremo vía el test client de Flask: subir un CSV con una fila ambigua
+  (2 candidatos), confirmar uno vía `/api/reconciliations/confirm`, y re-subir el mismo CSV
+  produce correctamente `{'status': 'reconciled', 'suggested_mm_ref': <mm_id elegido>}`.
+
+**Causa real, en el frontend**: `confirmMatch()` en `static/script.js` solo atenuaba la tarjeta
+en el DOM directamente (`opacity` + ocultar la lista de candidatos) tras un confirm con éxito,
+sin actualizar el objeto `proposal` correspondiente dentro de `lastProposals`. Verificado en
+navegador real (Playwright) contra el código anterior: justo después de pulsar "Confirmar Este",
+la tarjeta seguía mostrando el badge "Posible Coincidencia" (solo atenuado visualmente) en vez de
+"Ya Conciliado" -- y cualquier re-render posterior en la misma sesión sin volver a pedir datos al
+backend (p.ej. cambiar el filtro de etiqueta en `#proposalsFilterBar`) reconstruía la tarjeta
+desde ese estado desincronizado, mostrándola de nuevo con dudas y los botones "Confirmar Este"
+activos.
+
+**Fix**: `confirmMatch()` ahora actualiza `proposal.status`/`confidence`/`suggested_mm_ref`/
+`candidates` con el mismo resultado que calcularía `analyze_excel()` al re-analizar, y llama a
+`renderProposalsList()` para reflejarlo. Verificado en navegador real (Playwright) con el mismo
+caso sintético: tras confirmar, la tarjeta muestra "Ya Conciliado" de inmediato, y se mantiene
+así tras forzar un re-render local -- reproducido primero el fallo contra el código anterior
+(`git stash`) y confirmado que desaparece con el fix.
+
 ## 0.9.1.35 - 2026-07-19
 
 Propuesta #8 del `BACKLOG.md`: corrección/mejora visual sin lógica nueva, en la lista de
