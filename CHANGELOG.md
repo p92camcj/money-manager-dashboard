@@ -2,6 +2,28 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.8.2.29 - 2026-07-19
+
+Corrección de bug (Bug #2 de `BACKLOG.md`), verificada contra el móvil real con transacciones de
+prueba creadas y borradas durante la investigación (ver `CLAUDE.md`, sección "Escritura:
+`POST /moneyBook/create`..." para el detalle completo del mapeo confirmado):
+
+- **Categoría/subcategoría no se guardaban al crear/editar una transacción desde el dashboard**:
+  confirmado que `moneyBook/create`/`update` ignoran `mbCategory`/`subCategory` si no van
+  acompañados del `mcid`/`mcscid` real de esa categoría/subcategoría -- sin ellos, el móvil
+  respondía `{success:true}` pero guardaba `mbCategory` literalmente como el string `"None"`.
+  `static/script.js` añade `fetchCategoryMap()` (nuevo, lee `moneyBook/getInitData` al cargar,
+  igual que hace el propio cliente oficial de PC Manager) y `submitTransaction()` ahora adjunta
+  `mcid`/`mcscid` resueltos por nombre junto a `mbCategory`/`subCategory`.
+- **Las transacciones de Ingreso podían no guardarse nunca, en silencio**: `inOutCode` para
+  Ingreso era `'2'` en vez de `'0'` -- verificado con una transacción de prueba real que el móvil
+  respondía `{success:true}` pero la transacción no llegaba a persistir en ningún rango de fechas
+  (`'2'` se trata internamente como movimiento de activos, no como Ingreso). Corregido el mapeo a
+  `{'Gasto': '1', 'Ingreso': '0', 'Transferencia': '3'}`.
+- Añadido logging (`logger.info`, prefijo `[write-debug]`) del payload real enviado y la
+  respuesta cruda del móvil en `/api/proxy` para `moneyBook/create`/`update`, usado para
+  diagnosticar este bug y que queda como diagnóstico permanente para el futuro.
+
 ## 0.8.1.26 - 2026-07-19
 
 Corrección interna, sin funcionalidad nueva visible: el Release `v0.8.0.25` ya publicado en

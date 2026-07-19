@@ -41,21 +41,6 @@ Pendiente:
     Probablemente sea más sencillo extender ese indicador existente para que también reaccione a
     fallos de proxy a mitad de sesión, en vez de crear un aviso nuevo desde cero.
 
-### Bug #2: categoría y subcategoría no se guardan al crear una transacción desde "Pre-rellenar y Añadir"
-
-- **Estado:** pendiente — causa sin confirmar, no arreglar a ciegas.
-- **Detectado:** 2026-07-18.
-
-Al crear una transacción a través del flujo de conciliación (botón "📥 Pre-rellenar y Añadir" sobre
-un movimiento nuevo del Excel), el resto de campos se guardan correctamente pero `mbCategory` y
-`subCategory` no.
-
-Hipótesis sin confirmar: relacionado con la inconsistencia ya documentada en `CLAUDE.md` (sección
-"La API real del móvil") entre el `inOutType`/`inOutCode` que `static/script.js:submitTransaction`
-envía al crear/editar, y lo que el propio JS del móvil (`reference/moneybook.js`) sugiere que
-espera realmente el servidor PC Manager. Pendiente de instrumentar (log del payload real enviado a
-`/moneyBook/create` y de la respuesta) antes de tocar código a ciegas.
-
 ---
 
 ## Propuestas de mejora pendientes
@@ -112,6 +97,30 @@ limitación original persiste tal cual estaba documentada.
 ---
 
 ## Resueltos
+
+### Bug #2: categoría y subcategoría no se guardan al crear una transacción desde "Pre-rellenar y Añadir"
+
+- **Resuelto:** 2026-07-19, versión `0.8.2.29`.
+- **Detectado:** 2026-07-18.
+
+Causa confirmada contra el móvil real (no la hipótesis original sobre `inOutType`/`inOutCode`):
+`moneyBook/create`/`update` ignoran `mbCategory`/`subCategory` si no van acompañados del
+`mcid`/`mcscid` real de esa categoría/subcategoría (el mismo ID que devuelve
+`moneyBook/getInitData`) — sin ellos, el móvil responde `{success:true}` pero guarda `mbCategory`
+literalmente como el string `"None"`. Verificado creando y borrando transacciones de prueba reales:
+sin `mcid`/`mcscid` se guarda como `"None"`; con `mcid`/`mcscid` junto al nombre (igual que hace el
+propio cliente oficial de PC Manager) se guarda correctamente. Detalle completo, incluida la
+verificación de que `inOutType` es puramente cosmético y del mapeo correcto de `inOutCode`
+(`{'Gasto': '1', 'Ingreso': '0', 'Transferencia': '3'}`), en `CLAUDE.md`, sección "Escritura:
+`POST /moneyBook/create`...".
+
+**Hallazgo colateral más grave que el bug original**: el mapeo previo usaba `inOutCode: '2'` para
+Ingreso, que se confirmó REALMENTE ROTO (no solo "distinto al de lectura") — una transacción de
+prueba con ese código respondió `{success:true}` pero nunca llegó a persistir, ni en
+`getDataByPeriod` ni en el balance de la cuenta, en un rango de 10 años completo. Esto implica que
+cualquier transacción de tipo Ingreso creada desde este dashboard antes de este fix pudo no haberse
+guardado nunca, sin que la UI (que mostraba "Transacción añadida exitosamente") diera ninguna
+pista. Corregido en el mismo commit.
 
 ### Propuesta #6: distribución "amigable" con ejecutable Windows (segunda vía, no sustituye a la técnica)
 

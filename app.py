@@ -160,19 +160,29 @@ def proxy(endpoint):
     url = f"{phone_url}/{endpoint}"
     params = request.args.to_dict()
     
+    # Diagnóstico temporal del Bug #2 (BACKLOG.md): loguear el payload real enviado a
+    # create/update y la respuesta cruda del móvil, para confirmar contra datos reales si el
+    # problema es el mapeo inOutType/inOutCode o la falta de mcid/mcscid en el payload.
+    is_write_endpoint = endpoint in ('moneyBook/create', 'moneyBook/update')
+    if is_write_endpoint:
+        logger.info(f"[write-debug] {endpoint} payload enviado: {request.form.to_dict()}")
+
     try:
         logger.info(f"Proxying {request.method} to: {url} (Timeout: 15s)")
         if request.method == 'GET':
             resp = requests.get(url, params=params, timeout=15)
         else:
             resp = requests.post(url, data=request.form, timeout=15)
-        
+
         resp.raise_for_status()
-        
+
         # Forzar decodificación UTF-8 en la respuesta en crudo para evitar corrupción
-        resp.encoding = 'utf-8' 
+        resp.encoding = 'utf-8'
         text = resp.text
         content_type = resp.headers.get('Content-Type', '').lower()
+
+        if is_write_endpoint:
+            logger.info(f"[write-debug] {endpoint} respuesta cruda del móvil ({resp.status_code}): {text[:500]!r}")
 
         if 'xml' in content_type or '<dataset>' in text:
             return jsonify(xml_to_dict(text))

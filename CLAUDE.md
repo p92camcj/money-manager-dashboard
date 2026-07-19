@@ -206,9 +206,9 @@ una con `assetId`, `assetName`, `assetMoney`).
 
 ### Escritura: `POST /moneyBook/create`, `POST /moneyBook/update`, `POST /moneyBook/delete`
 
-**`create`/`update` aceptan NOMBRES, no IDs, para `payType`, `mbCategory` y `subCategory`** — hay
-que mandar el texto exacto tal cual aparece en Money Manager (incluyendo emojis), no un
-identificador interno. Ejemplo real verificado (`test_post.py`):
+**`create`/`update` aceptan NOMBRES para `payType`, `mbCategory` y `subCategory`** — hay que mandar
+el texto exacto tal cual aparece en Money Manager (incluyendo emojis), no un identificador interno.
+Ejemplo real verificado (`test_post.py`):
 
 ```
 mbDate:      2026-03-27T10:00:00
@@ -227,22 +227,44 @@ assetId:     11
 misma cuenta (ver `getAssetName()` en `script.js`, que resuelve `assetId -> nombre` antes de
 construir el payload). Para transferencias se usa además `targetAssetId` (ID de la cuenta destino).
 
-**⚠️ Inconsistencia detectada entre `inOutType`/`inOutCode` de lectura y escritura — sin resolver:**
+**⚠️ `mbCategory`/`subCategory` por sí solos NO bastan — hace falta `mcid`/`mcscid` (Bug #2 de
+`BACKLOG.md`, resuelto 2026-07-19, verificado contra el móvil real):** si `create`/`update` reciben
+`mbCategory`/`subCategory` sin ir acompañados de `mcid`/`mcscid` (el ID real de la categoría y
+subcategoría, el mismo que devuelve `moneyBook/getInitData` en `category_0`/`category_1` como
+`mcid`/`mcname` y `mcsc[].mcscid`/`mcsc[].mcscname`), el móvil responde `{success:true}` pero
+**guarda `mbCategory` literalmente como el string `"None"`** y `mcid` como `"-2"` — confirmado
+creando una transacción de prueba real y verificando con `getDataByPeriod` que así quedó guardada
+(y limpiada después). Enviando `mcid`+`mbCategory` y `mcscid`+`subCategory` juntos (igual que hace
+el propio cliente oficial de PC Manager, `reference/all_mm.js`, que resuelve un ID de combo a
+nombre antes de mandar AMBOS) la categoría se guarda correctamente — verificado con el mismo
+método. `static/script.js` mantiene un mapa nombre→mcid/mcscid (`categoryMapData`, poblado por
+`fetchCategoryMap()` desde `moneyBook/getInitData` al cargar) y lo usa en `submitTransaction()`
+para adjuntar `mcid`/`mcscid` junto al nombre.
 
-- En **lectura** (XML de `getDataByPeriod`), `inOutType` es `"Ingreso"` / `"Gasto"` / `"Transferencia"`.
-- En **escritura** (`static/script.js:submitTransaction`), se traduce a otro vocabulario antes de
-  mandarlo:
-  ```js
-  inOutTypeMap = {'Gasto': 'Egreso', 'Ingreso': 'Ingreso', 'Transferencia': 'Transfer'}
-  inOutCodeMap = {'Gasto': '1', 'Ingreso': '2', 'Transferencia': '3'}
-  ```
-- Pero el propio JS original del móvil (`reference/moneybook.js`) usa códigos distintos al filtrar
-  por pestaña: `inOutCode "0"` = Ingreso, `inOutCode "1"` = Gasto, y `"2"/"3"/"4"/"7"/"8"` para
-  movimientos de activos/transferencias (varios códigos, no uno solo).
-- No hay certeza de cuál mapeo es el correcto para `create`/`update` sin probarlo en vivo contra el
-  móvil. Si tocas código de creación/edición de transacciones, **verifica contra el móvil real**
-  antes de asumir que el mapeo actual de `script.js` es correcto, y actualiza esta sección con lo
-  que confirmes.
+**✅ `inOutType`/`inOutCode` — ambigüedad ya resuelta (verificado contra el móvil real,
+2026-07-19):**
+
+- **`inOutCode` es el que determina el comportamiento real; `inOutType` (el texto) es puramente
+  cosmético.** Verificado creando dos transacciones idénticas salvo el texto de `inOutType`
+  (`"Egreso"` vs. `"Gasto"`, ambas con `inOutCode: "1"`): ambas se guardaron y se leyeron después
+  exactamente igual (`inOutType: "Gasto"` en la lectura) — el móvil deriva el `inOutType` de
+  lectura a partir de `inOutCode`, no del texto recibido en la escritura.
+- **Mapeo de `inOutCode` correcto para `create`/`update`, confirmado por prueba real:**
+  `{'Gasto': '1', 'Ingreso': '0', 'Transferencia': '3'}` — coincide con lo que ya sugería
+  `reference/moneybook.js` (que usa `inOutCode "0"` para Ingreso y `"1"` para Gasto al filtrar por
+  pestaña), no con el mapeo previo de `static/script.js` (`'Ingreso': '2'`).
+  - **`inOutCode: '2'` para Ingreso estaba REALMENTE ROTO, no solo "distinto":** se creó una
+    transacción de prueba con `inOutCode: '2'` y el móvil respondió `{success:true}`, pero la
+    transacción **nunca llegó a persistir** — no aparece en `getDataByPeriod` ni en un rango de
+    fechas de 10 años completo, y el balance de la cuenta usada no cambió. `reference/all_mm.js`
+    explica por qué: el código `"2"` se trata internamente como un tipo de movimiento de activos
+    (`onMove_Asset`), no como Ingreso — al faltarle los campos que ese tipo de movimiento espera
+    (`toAssetId`/`targetAssetId`), el móvil lo descarta en silencio. Esto significa que, antes de
+    este fix, **cualquier transacción de tipo Ingreso creada desde este dashboard pudo no haberse
+    guardado nunca**, aunque la UI mostrara "Transacción añadida exitosamente" — no se detectó
+    antes porque no había ningún log que comparara lo enviado con lo realmente persistido.
+  - `inOutCode` para Transferencia (`'3'`) no se tocó en este fix — sigue pendiente de verificar a
+    fondo, ver "Tabla de transacciones — transferencias" más abajo.
 
 `delete` espera `ids` con prefijo `:` — ejemplo: `ids=:<id_transaccion>`.
 

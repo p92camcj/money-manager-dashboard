@@ -10,6 +10,13 @@ let lastProposals = []; // última tanda de propuestas de conciliación, para qu
 let pendingFiles = []; // ficheros seleccionados pendientes de etiquetar/confirmar antes de subir
 let currentLabelFilter = 'all'; // etiqueta de origen seleccionada en el filtro de propuestas
 
+// Mapa nombre de categoría/subcategoría -> mcid/mcscid reales de Money Manager (Bug #2,
+// BACKLOG.md: confirmado contra el móvil real que create/update IGNORAN mbCategory/subCategory
+// si no van acompañados del mcid/mcscid correspondiente -- sin ellos, el móvil guarda
+// mbCategory literalmente como "None"). Se construye una sola vez desde moneyBook/getInitData,
+// la misma fuente que usa el propio cliente oficial de PC Manager (reference/all_mm.js).
+let categoryMapData = { income: {}, expense: {} };
+
 // --- UTILIDADES DE CACHÉ ---
 function setCache(key, data) {
     if (!data) return;
@@ -97,6 +104,7 @@ async function loadData() {
     assetsData = getCache('assets') || [];
     transactionsData = getCache('transactions') || [];
     budgetsData = getCache('budgets') || [];
+    categoryMapData = getCache('categoryMap') || { income: {}, expense: {} };
     
     if (window.AnalyticsEngine) AnalyticsEngine.init(transactionsData);
     
@@ -107,6 +115,7 @@ async function loadData() {
         fetchAssets(),
         fetchTransactions(),
         fetchBudgets(),
+        fetchCategoryMap(),
         loadIPConfig()
     ]).then(results => {
         const anySuccess = results.some(r => r.status === 'fulfilled' && r.value === true);
@@ -166,6 +175,35 @@ async function fetchBudgets() {
             setCache('budgets', data.hierarchy);
             if (currentTab === 'budgets') renderBudgets();
             if (currentTab === 'dashboard') renderChart();
+            return true;
+        }
+    } catch { return false; }
+}
+
+// moneyBook/getInitData es el mismo endpoint que usa el cliente oficial de PC Manager para
+// poblar sus combos de categoría (reference/all_mm.js) -- category_0 son categorías de Ingreso,
+// category_1 de Gasto, cada una con su mcid real y sus subcategorías (mcsc) con su mcscid real.
+// Necesario para que submitTransaction() pueda enviar mcid/mcscid junto al nombre (ver Bug #2).
+function buildCategoryMap(list) {
+    const map = {};
+    (list || []).forEach(c => {
+        const subs = {};
+        (c.mcsc || []).forEach(s => { subs[s.mcscname] = s.mcscid; });
+        map[c.mcname] = { mcid: c.mcid, subs };
+    });
+    return map;
+}
+
+async function fetchCategoryMap() {
+    try {
+        const resp = await fetch('/api/proxy/moneyBook/getInitData');
+        const data = await resp.json();
+        if (data && !data.error) {
+            categoryMapData = {
+                income: buildCategoryMap(data.category_0),
+                expense: buildCategoryMap(data.category_1),
+            };
+            setCache('categoryMap', categoryMapData);
             return true;
         }
     } catch { return false; }
@@ -654,10 +692,16 @@ async function submitTransaction() {
     const payload = new URLSearchParams();
     const typeStr = document.getElementById('editType').value;
     
-    let inOutTypeMap = {'Gasto': 'Egreso', 'Ingreso': 'Ingreso', 'Transferencia': 'Transfer'};
-    let inOutCodeMap = {'Gasto': '1', 'Ingreso': '2', 'Transferencia': '3'};
-    
-    payload.append('inOutType', inOutTypeMap[typeStr] || typeStr);
+    // inOutCode confirmado contra el móvil real (Bug #2, BACKLOG.md): "0"=Ingreso, "1"=Gasto,
+    // "3"=Transferencia (lado origen) -- reference/moneybook.js ya apuntaba a este mapeo, y el
+    // mapeo previo ('Ingreso': '2') se confirmó roto: el móvil respondía {success:true} pero la
+    // transacción nunca llegaba a persistir (invisible incluso en un rango de 10 años completo).
+    // inOutType (el texto) se confirmó puramente cosmético: el móvil deriva el inOutType real de
+    // lectura ("Gasto"/"Ingreso") a partir de inOutCode, no del texto recibido -- se sigue
+    // enviando el nombre en español tal cual para no depender de esa asunción indefinidamente.
+    let inOutCodeMap = {'Gasto': '1', 'Ingreso': '0', 'Transferencia': '3'};
+
+    payload.append('inOutType', typeStr);
     payload.append('inOutCode', inOutCodeMap[typeStr] || '1');
     payload.append('mbDate', `${document.getElementById('editDate').value} ${document.getElementById('editTime').value}:00`);
     payload.append('mbContent', document.getElementById('editContent').value);
@@ -676,9 +720,22 @@ async function submitTransaction() {
     } else {
     const cat = document.getElementById('editCategory').value;
         const sub = document.getElementById('editSubCategory').value;
-        console.log('[DIAG] submitTransaction: cat=', cat, 'sub=', sub);
         if (cat) payload.append('mbCategory', cat);
         if (sub) payload.append('subCategory', sub);
+
+        // Bug #2 (BACKLOG.md): el móvil ignora mbCategory/subCategory si no van acompañados
+        // del mcid/mcscid real -- sin ellos guarda mbCategory literalmente como "None". Se
+        // resuelve por nombre contra categoryMapData (ver fetchCategoryMap()).
+        const catMap = (typeStr === 'Ingreso' ? categoryMapData.income : categoryMapData.expense) || {};
+        const catEntry = catMap[cat];
+        if (catEntry) {
+            payload.append('mcid', catEntry.mcid);
+            if (sub && catEntry.subs[sub]) {
+                payload.append('mcscid', catEntry.subs[sub]);
+            }
+        } else if (cat) {
+            console.warn('[submitTransaction] No se encontró mcid para la categoría', cat, '-- puede no guardarse correctamente. ¿Se ha sincronizado categoryMapData?');
+        }
     }
 
     if (currentEditingId) {
