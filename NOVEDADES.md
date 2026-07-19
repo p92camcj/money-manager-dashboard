@@ -4,6 +4,12 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.12.0.43 - 2026-07-20
+
+- Nuevo buscador propio: pulsa Ctrl+F en cualquier momento y aparece una barra de búsqueda arriba
+  a la derecha que filtra al instante lo que estés viendo (Transacciones, Conciliación o
+  Presupuestos), sin distinguir mayúsculas ni acentos. Se cierra con Escape.
+
 ## 0.11.1.42 - 2026-07-20
 
 - Arreglado: al abrir por primera vez el detalle de una transacción en una sesión, a veces la

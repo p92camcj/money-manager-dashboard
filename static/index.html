@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Money Manager Premium - Dashboard</title>
-    <link rel="stylesheet" href="style.css?v=14">
+    <link rel="stylesheet" href="style.css?v=15">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
@@ -229,6 +229,17 @@
                 <button type="button" class="btn-primary" onclick="closeNovedadesModal()">Cerrar</button>
             </div>
         </div>
+    </div>
+
+    <!-- Buscador estilo "Ctrl+F" en toda la pantalla, propio de la app -- ver CLAUDE.md /
+         CHANGELOG.md. Se intercepta Ctrl+F/Cmd+F para abrir esto en vez de dejar que el
+         navegador/WebView abra su buscador nativo (en el .exe la app corre en una ventana
+         pywebview sin barra de direcciones, donde el buscador nativo puede ni estar accesible). -->
+    <div id="inPageSearchBar" class="in-page-search-bar glass" style="display:none;">
+        <span style="opacity:0.7;">🔎</span>
+        <input type="text" id="inPageSearchInput" placeholder="Buscar en esta pantalla..." oninput="handleInPageSearchInput(this.value)">
+        <span id="inPageSearchCount" class="in-page-search-count"></span>
+        <button type="button" class="btn-secondary btn-sm" onclick="closeInPageSearch()" title="Cerrar (Esc)">✕</button>
     </div>
 
     <script src="js/analytics.js?v=8"></script>

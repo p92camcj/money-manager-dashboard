@@ -701,6 +701,45 @@ antes de tocar código, tal y como pedía esta propuesta en `BACKLOG.md`:
   reutiliza `viewAssociatedRecord()` (Propuesta #10) tal cual, ya que un huérfano ya trae el `id`
   real de MM.
 
+## Buscador "Ctrl+F" en toda la pantalla
+
+Introducido 2026-07-20. Ctrl+F/Cmd+F dentro de la ventana de la app abre una barra de búsqueda
+propia (`#inPageSearchBar` en `index.html`, arriba a la derecha) en vez de dejar que el
+navegador/WebView abra el suyo — necesario para que funcione igual de bien en la distribución
+`.exe` (`desktop_app.py`, ventana pywebview sin barra de direcciones, donde el buscador nativo
+puede ni estar accesible) que en la vía técnica con navegador normal.
+
+- `static/script.js` intercepta `keydown` a nivel de `document` (no en un input concreto): si
+  `ctrlKey`/`metaKey` + `f`, `preventDefault()` y `openInPageSearch()`; `Escape` cierra la barra si
+  está abierta. Filtra por substring sin distinguir mayúsculas/tildes
+  (`normalizeForSearch()`: `String.normalize('NFD')` + eliminar el bloque Unicode de marcas
+  diacríticas U+0300-U+036F) contra el `textContent` completo de cada ítem — no columna a columna.
+- **Granularidad de "un resultado" según la pestaña activa** (`getInPageSearchItems()`): fila de
+  `#transBody` en Transacciones, tarjeta de `#proposalsList`/`#mmOrphansList` en Conciliación
+  (incluye tanto propuestas como huérfanos del arqueo de caja), nodo de `#budgetTree` en
+  Presupuestos. En Dashboard/Ajustes no hay una lista equivalente que filtrar — la barra se puede
+  abrir igual, simplemente no oculta nada ahí.
+- **Oculta, no solo resalta**: coincidencias se dejan visibles, el resto gana la clase
+  `.search-hidden` (`display: none !important` en `style.css`).
+- **Independiente del filtro de texto que ya existía en Transacciones** (`#filterSearch`, que solo
+  busca por columnas concretas de esa tabla vía `AnalyticsEngine.applyAdvancedFilters` y alimenta
+  `currentFilter.searchStr`) — este buscador nuevo es genérico, no lo sustituye, y ambos pueden
+  estar activos a la vez sin interferir (uno filtra los datos antes de renderizar la tabla, el otro
+  oculta filas ya renderizadas).
+- **`reapplyInPageSearch()`**: los `render*()` de listas (`renderTransactions()`,
+  `renderProposalsList()`, `renderMmOrphansList()`, `renderBudgets()`) reconstruyen su contenido
+  con `innerHTML`, perdiendo cualquier clase `search-hidden` ya aplicada — cada uno de ellos llama
+  a `reapplyInPageSearch()` (no-op si no hay búsqueda activa) al final, y `switchTab()` también la
+  llama explícitamente después de `updateUI()` para cubrir Conciliación, cuyas tarjetas no se
+  reconstruyen solo por cambiar de pestaña. Así una búsqueda activa sobrevive a un refresco de
+  datos, un cambio de filtro/etiqueta o un cambio de pestaña sin tener que repetirla a mano.
+- **Verificación**: sin navegador/móvil disponibles en la sesión en que se implementó, se verificó
+  la sintaxis del fichero completo (`node --check static/script.js`) y, por separado, la lógica de
+  `normalizeForSearch()` extraída y evaluada en Node contra casos con tildes/mayúsculas reales
+  (`"Depósito"` vs `"deposito"` normalizan igual). El resto (integración con el DOM real,
+  comportamiento visual de `.search-hidden`) se verificó por trazado de código, no en un navegador
+  real — pendiente de una verificación visual en vivo si aparece algún caso raro.
+
 ## Aviso de conexión perdida con el móvil
 
 **Resuelto 2026-07-19 (Bug #1 de `BACKLOG.md`).** Antes, un fallo de conexión con el móvil a

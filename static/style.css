@@ -231,6 +231,24 @@ form label { display: block; margin-top: 15px; color: var(--text-muted); font-si
 form input, form select { width: 100%; padding: 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 10px; color: white; margin-top: 5px; }
 .modal-buttons { margin-top: 30px; display: flex; gap: 10px; }
 
+/* Buscador "Ctrl+F" en toda la pantalla (ver CLAUDE.md/CHANGELOG.md) -- barra flotante propia,
+   independiente del filtro de texto ya existente en Transacciones (#filterSearch, que solo busca
+   en esa tabla por columnas concretas). .search-hidden oculta filas/tarjetas/nodos que no
+   coinciden con la búsqueda en la vista activa. */
+.in-page-search-bar {
+    position: fixed; top: 20px; right: 20px; z-index: 200;
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-radius: 14px;
+    background: rgba(15, 23, 42, 0.92); border: 1px solid var(--glass-border);
+    box-shadow: 0 15px 35px -10px rgba(0, 0, 0, 0.6);
+}
+.in-page-search-bar input {
+    background: rgba(0, 0, 0, 0.3); border: 1px solid var(--glass-border); border-radius: 8px;
+    color: var(--text-main); padding: 8px 12px; width: 220px;
+}
+.in-page-search-count { color: var(--text-muted); font-size: 0.8rem; min-width: 90px; }
+.search-hidden { display: none !important; }
+
 @media (max-width: 768px) {
     .sidebar { width: 80px; padding: 20px 10px; }
     .logo h2, nav li span:not(.logo-icon) { display: none; }

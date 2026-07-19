@@ -3,6 +3,35 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.12.0.43 - 2026-07-20
+
+Buscador propio estilo "Ctrl+F" que funciona en toda la app, no limitado a una columna concreta.
+Motivación: en el `.exe` la app corre dentro de una ventana pywebview sin barra de direcciones, así
+que el buscador nativo del navegador puede ni estar accesible ahí -- necesitaba funcionar igual de
+bien en esa vía que en la técnica con navegador.
+
+- `document.addEventListener('keydown', ...)` en `static/script.js` intercepta Ctrl+F/Cmd+F con
+  `preventDefault()` y abre `#inPageSearchBar` (barra flotante nueva en `static/index.html`,
+  arriba a la derecha) en vez de dejar que el navegador/WebView abra el suyo. Escape la cierra;
+  vaciar el campo de texto (sin cerrar la barra) vuelve a mostrar todo.
+- Filtra por substring, sin distinguir mayúsculas ni tildes (`normalizeForSearch()`: `normalize('NFD')`
+  + strip del bloque Unicode de marcas diacríticas), contra el `textContent` completo del ítem --
+  no columna a columna. Oculta lo que no coincide (`.search-hidden { display: none !important; }`)
+  en vez de solo resaltarlo.
+- Granularidad de "un resultado" según la pestaña activa (`getInPageSearchItems()`): fila de
+  `#transBody` en Transacciones, tarjeta de `#proposalsList`/`#mmOrphansList` en Conciliación, nodo
+  de `#budgetTree` en Presupuestos. Dashboard/Ajustes no tienen una lista que filtrar -- la barra
+  se puede abrir igual, simplemente no oculta nada ahí.
+- Independiente del filtro de texto que ya existía en Transacciones (`#filterSearch`, que solo
+  busca por columnas concretas de esa tabla vía `AnalyticsEngine.applyAdvancedFilters`) -- este
+  buscador es genérico y no lo sustituye, ambos pueden estar activos a la vez.
+- `reapplyInPageSearch()` se llama al final de `renderTransactions()`, `renderProposalsList()`,
+  `renderMmOrphansList()` y `renderBudgets()` (que reconstruyen su lista con `innerHTML` y
+  perderían las clases `search-hidden` ya aplicadas) y también tras `switchTab()` (para
+  Conciliación, cuyas tarjetas no se reconstruyen solo por cambiar de pestaña) -- así una búsqueda
+  activa sobrevive a un refresco de datos, un cambio de filtro/etiqueta o un cambio de pestaña, sin
+  tener que rehacerla a mano.
+
 ## 0.11.1.42 - 2026-07-20
 
 Minibug: la subcategoría no cargaba la primera vez que se abría el modal de detalle/edición de

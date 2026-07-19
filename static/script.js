@@ -328,6 +328,7 @@ function renderBudgets() {
         `;
         tree.appendChild(node);
     });
+    reapplyInPageSearch();
 }
 
 function toggleNode(idx) { document.getElementById(`node-${idx}`).classList.toggle('expanded'); }
@@ -446,6 +447,7 @@ function renderTransactions() {
         `;
         body.appendChild(tr);
     });
+    reapplyInPageSearch();
 }
 
 // --- CONTROLES DE FILTROS Y PESTAÑAS ---
@@ -457,6 +459,11 @@ function switchTab(id) {
     });
     currentTab = id;
     updateUI();
+    // updateUI() ya reaplica la búsqueda activa para transactions/budgets (vía renderTransactions()/
+    // renderBudgets()) -- para conciliation, cuyas tarjetas no se reconstruyen al cambiar de
+    // pestaña, hace falta este pase explícito para que la búsqueda siga aplicada a su DOM ya
+    // existente.
+    reapplyInPageSearch();
 }
 
 function applyFilter(c, s) { 
@@ -1220,6 +1227,7 @@ function renderProposalsList() {
         `;
         list.appendChild(card);
     });
+    reapplyInPageSearch();
 }
 
 // Propuesta #11 (BACKLOG.md), arqueo de caja: sentido contrario al de renderProposalsList()
@@ -1263,6 +1271,7 @@ function renderMmOrphansList() {
         `;
         list.appendChild(card);
     });
+    reapplyInPageSearch();
 }
 
 // Resumen del arqueo de caja "de un vistazo" -- cuánto cuadra, cuánto falta por revisar, cuánto
@@ -1478,6 +1487,109 @@ async function showFullNovedades() {
         alert('No se pudo cargar el histórico de novedades: ' + e.message);
     }
 }
+
+// --- BUSCADOR "CTRL+F" EN TODA LA PANTALLA ---
+// Intercepta Ctrl+F/Cmd+F dentro de la ventana de la app (preventDefault) y abre una barra de
+// búsqueda propia, en vez de dejar que el navegador/WebView abra el suyo -- en el .exe la app
+// corre dentro de una ventana pywebview sin barra de direcciones, donde el buscador nativo del
+// navegador puede ni estar accesible. Filtra por substring (sin distinguir mayúsculas/tildes)
+// contra el texto visible de la vista activa (Transacciones, Conciliación, Presupuestos),
+// ocultando lo que no coincide en vez de solo resaltarlo. Independiente del filtro de texto que
+// ya existía en Transacciones (#filterSearch, que solo busca por columnas concretas de esa
+// tabla) -- este buscador es genérico y funciona igual en cualquier pestaña con una lista.
+let inPageSearchQuery = '';
+
+// El rango de la clase de caracteres es el bloque Unicode "Combining Diacritical Marks"
+// (U+0300-U+036F) escrito literalmente -- tras normalize('NFD') una tilde queda como su letra
+// base más uno de estos caracteres sueltos, así que quitarlos deja el texto sin acentos.
+function normalizeForSearch(str) {
+    return (str || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+// Granularidad de "un resultado" según la pestaña activa: fila de tabla en Transacciones,
+// tarjeta de propuesta/huérfano en Conciliación, nodo de categoría en Presupuestos. En
+// Dashboard/Ajustes no hay una lista que filtrar -- la barra se puede abrir igual, pero no oculta
+// nada (lista vacía).
+function getInPageSearchItems() {
+    switch (currentTab) {
+        case 'transactions': return Array.from(document.querySelectorAll('#transBody > tr'));
+        case 'conciliation': return Array.from(document.querySelectorAll('#proposalsList > .proposal-card, #mmOrphansList > .proposal-card'));
+        case 'budgets': return Array.from(document.querySelectorAll('#budgetTree > .tree-node'));
+        default: return [];
+    }
+}
+
+function updateInPageSearchCount(matches, total) {
+    const el = document.getElementById('inPageSearchCount');
+    if (!el) return;
+    if (matches === null) { el.textContent = ''; return; }
+    el.textContent = total > 0 ? `${matches} / ${total}` : 'Sin resultados aquí';
+}
+
+function applyInPageSearch() {
+    const items = getInPageSearchItems();
+    if (!inPageSearchQuery) {
+        items.forEach(el => el.classList.remove('search-hidden'));
+        updateInPageSearchCount(null, items.length);
+        return;
+    }
+    const q = normalizeForSearch(inPageSearchQuery);
+    let matches = 0;
+    items.forEach(el => {
+        const isMatch = normalizeForSearch(el.textContent).includes(q);
+        el.classList.toggle('search-hidden', !isMatch);
+        if (isMatch) matches++;
+    });
+    updateInPageSearchCount(matches, items.length);
+}
+
+// Los render*() de listas reconstruyen su contenido con innerHTML, perdiendo cualquier clase
+// search-hidden ya aplicada -- se llama al final de cada uno de ellos (renderTransactions(),
+// renderProposalsList(), renderMmOrphansList(), renderBudgets()) para que la búsqueda activa
+// sobreviva a un refresco de datos o a un cambio de filtro/etiqueta. No-op si no hay búsqueda activa.
+function reapplyInPageSearch() {
+    if (inPageSearchQuery) applyInPageSearch();
+}
+
+function openInPageSearch() {
+    const bar = document.getElementById('inPageSearchBar');
+    if (!bar) return;
+    bar.style.display = 'flex';
+    const input = document.getElementById('inPageSearchInput');
+    input.value = inPageSearchQuery;
+    input.focus();
+    input.select();
+    applyInPageSearch();
+}
+
+function closeInPageSearch() {
+    const bar = document.getElementById('inPageSearchBar');
+    if (bar) bar.style.display = 'none';
+    inPageSearchQuery = '';
+    const input = document.getElementById('inPageSearchInput');
+    if (input) input.value = '';
+    // Limpia también los ítems de otras pestañas por si se dejaron ocultos al cambiar de pestaña
+    // con la búsqueda todavía activa.
+    document.querySelectorAll('.search-hidden').forEach(el => el.classList.remove('search-hidden'));
+}
+
+function handleInPageSearchInput(value) {
+    inPageSearchQuery = value;
+    applyInPageSearch();
+}
+
+document.addEventListener('keydown', (e) => {
+    const key = (e.key || '').toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && key === 'f') {
+        e.preventDefault();
+        openInPageSearch();
+        return;
+    }
+    if (key === 'escape') {
+        const bar = document.getElementById('inPageSearchBar');
+        if (bar && bar.style.display !== 'none') closeInPageSearch();
+    }
+});
 
 document.addEventListener('DOMContentLoaded', () => {
     loadData();
