@@ -159,6 +159,16 @@ header { display: flex; justify-content: space-between; align-items: center; mar
 .proposal-card.proposal-attention { border-left-color: rgba(234, 179, 8, 0.6); box-shadow: 0 4px 16px rgba(234, 179, 8, 0.08); }
 .proposal-card.proposal-attention.status-new { border-left-color: rgba(34, 197, 94, 0.6); box-shadow: 0 4px 16px rgba(34, 197, 94, 0.08); }
 
+/* Propuesta #11 (BACKLOG.md), arqueo de caja: resumen de un vistazo y sección de huérfanos de
+   Money Manager, visualmente aparte de #proposalsList porque van en el sentido contrario
+   (MM -> banco, no banco -> MM) -- ver CLAUDE.md. */
+.reconciliation-summary-bar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.reconciliation-summary-bar .badge { font-size: 0.85rem; padding: 6px 14px; }
+.mm-orphans-section { margin-top: 40px; padding-top: 30px; border-top: 1px dashed var(--glass-border); }
+.mm-orphans-section h3 { margin-bottom: 6px; }
+.mm-orphans-hint { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 15px; }
+.proposal-card.mm-orphan-card { border-left-color: rgba(234, 179, 8, 0.6); }
+
 .category-badge, .subcategory-badge { cursor: pointer; transition: 0.2s; display: inline-block; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .category-badge:hover { background: var(--primary); color: white; }
 .subcategory-badge:hover { background: var(--secondary); color: white; }

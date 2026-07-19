@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Money Manager Premium - Dashboard</title>
-    <link rel="stylesheet" href="style.css?v=13">
+    <link rel="stylesheet" href="style.css?v=14">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
@@ -124,11 +124,21 @@
                 <div id="fileLabelsList" class="card glass" style="display:none; margin-bottom:20px;">
                     <!-- Ficheros seleccionados pendientes de etiquetar/confirmar -->
                 </div>
+                <div id="reconciliationSummaryBar" class="reconciliation-summary-bar" style="display:none;">
+                    <!-- Resumen del arqueo de caja: cuánto cuadra, cuánto falta por cada lado -->
+                </div>
                 <div id="proposalsFilterBar" class="proposals-filter-bar" style="display:none; align-items:center; gap:10px; margin-bottom:15px;">
                     <!-- Filtro por etiqueta de origen -->
                 </div>
                 <div id="proposalsList" class="proposals-grid">
                     <!-- Propuestas aquí -->
+                </div>
+                <div id="mmOrphansSection" class="mm-orphans-section" style="display:none;">
+                    <h3>Movimientos en Money Manager sin equivalente en el extracto</h3>
+                    <p class="mm-orphans-hint">Están dentro de la cuenta y el periodo del extracto subido, pero ninguna línea del banco los cubre — pueden ser gastos en efectivo, duplicados o errores de introducción manual. Revísalos.</p>
+                    <div id="mmOrphansList" class="proposals-grid">
+                        <!-- Huérfanos de Money Manager (Propuesta #11) -->
+                    </div>
                 </div>
             </section>
 
@@ -222,6 +232,6 @@
     </div>
 
     <script src="js/analytics.js?v=8"></script>
-    <script src="script.js?v=21"></script>
+    <script src="script.js?v=22"></script>
 </body>
 </html>

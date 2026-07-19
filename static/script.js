@@ -7,6 +7,7 @@ let chartInstance = null;
 let currentFilter = { category: null, subCategory: null, searchStr: null, minAmount: null, maxAmount: null, tags: null };
 let currentPeriod = { startDate: '', endDate: '', label: '' };
 let lastProposals = []; // última tanda de propuestas de conciliación, para que confirmMatch() encuentre fecha/importe/descripción por source_id
+let lastOrphans = []; // última tanda de huérfanos de Money Manager sin equivalente en el extracto (Propuesta #11, arqueo de caja)
 let pendingFiles = []; // ficheros seleccionados pendientes de etiquetar/confirmar antes de subir
 let currentLabelFilter = 'all'; // etiqueta de origen seleccionada en el filtro de propuestas
 
@@ -1080,6 +1081,7 @@ async function confirmUploadFiles() {
 
         updateConnectionStatus('online');
         lastProposals = data.proposals || [];
+        lastOrphans = data.mm_orphans || [];
         currentLabelFilter = 'all';
 
         if (data.file_errors && data.file_errors.length > 0) {
@@ -1089,6 +1091,8 @@ async function confirmUploadFiles() {
 
         updateLabelFilterBar();
         renderProposalsList();
+        renderMmOrphansList();
+        renderReconciliationSummary();
     } catch (e) {
         list.innerHTML = '';
         alert("Error crítico subiendo ficheros: " + e.message);
@@ -1101,7 +1105,7 @@ async function confirmUploadFiles() {
 
 function updateLabelFilterBar() {
     const bar = document.getElementById('proposalsFilterBar');
-    const labels = [...new Set(lastProposals.map(p => p.source_label))];
+    const labels = [...new Set([...lastProposals.map(p => p.source_label), ...lastOrphans.map(o => o.source_label)])];
 
     if (labels.length <= 1) {
         bar.style.display = 'none';
@@ -1111,9 +1115,9 @@ function updateLabelFilterBar() {
     }
 
     bar.style.display = 'flex';
-    const countAll = lastProposals.length;
+    const countAll = lastProposals.length + lastOrphans.length;
     const options = labels.map(l => {
-        const count = lastProposals.filter(p => p.source_label === l).length;
+        const count = lastProposals.filter(p => p.source_label === l).length + lastOrphans.filter(o => o.source_label === l).length;
         return `<option value="${l}" ${currentLabelFilter === l ? 'selected' : ''}>${l} (${count})</option>`;
     }).join('');
     bar.innerHTML = `
@@ -1128,6 +1132,7 @@ function updateLabelFilterBar() {
 function handleLabelFilterChange(value) {
     currentLabelFilter = value;
     renderProposalsList();
+    renderMmOrphansList();
 }
 
 function renderProposalsList() {
@@ -1206,6 +1211,73 @@ function renderProposalsList() {
         `;
         list.appendChild(card);
     });
+}
+
+// Propuesta #11 (BACKLOG.md), arqueo de caja: sentido contrario al de renderProposalsList()
+// (MM -> banco, no banco -> MM) -- sección visualmente aparte a propósito (ver CLAUDE.md,
+// "Arqueo de caja: huérfanos de Money Manager sin equivalente en el extracto"), para que no se
+// lea como "falta hacer algo" del mismo tipo que un `new`/`suggested_match` de #proposalsList.
+function renderMmOrphansList() {
+    const section = document.getElementById('mmOrphansSection');
+    const list = document.getElementById('mmOrphansList');
+    list.innerHTML = '';
+
+    if (!lastOrphans || lastOrphans.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = 'block';
+
+    const visible = (currentLabelFilter === 'all'
+        ? lastOrphans
+        : lastOrphans.filter(o => o.source_label === currentLabelFilter)
+    ).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    visible.forEach(o => {
+        const card = document.createElement('div');
+        const transferTag = o.is_transfer
+            ? `<span class="badge badge-info" title="Transferencia interna de Money Manager${o.transfer_side ? ` (lado ${o.transfer_side})` : ''}. Si el otro banco de esta transferencia no está en esta tanda, es normal que aparezca aquí.">🔁 Transferencia interna</span>`
+            : '';
+        card.className = 'card glass proposal-card mm-orphan-card';
+        card.innerHTML = `
+            <div class="proposal-header">
+                <strong>${o.date}</strong>
+                <span style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <span class="badge badge-info" title="${o.source_filename || ''}">${o.source_label || ''}</span>
+                    <span class="badge badge-warning">Solo en Money Manager</span>
+                    ${transferTag}
+                </span>
+            </div>
+            <p>${o.description}${o.category ? ` <span style="color:var(--text-muted); font-size:0.85rem;">· ${o.category}</span>` : ''}</p>
+            <p class="amount ${o.amount < 0 ? 'outcome-text' : 'income-text'}">${formatCurrency(o.amount)}</p>
+            <div style="margin-top:10px;"><button class="btn-secondary btn-sm" onclick="viewAssociatedRecord('${o.id}', '${o.date}')">👁 Ver Registro</button></div>
+        `;
+        list.appendChild(card);
+    });
+}
+
+// Resumen del arqueo de caja "de un vistazo" -- cuánto cuadra, cuánto falta por revisar, cuánto
+// falta solo por el lado del banco y cuánto falta solo por el lado de Money Manager. Deliberadamente
+// NO se filtra por `currentLabelFilter` (a diferencia de las listas): es un resumen global de la
+// tanda completa, no de la etiqueta seleccionada en cada momento.
+function renderReconciliationSummary() {
+    const bar = document.getElementById('reconciliationSummaryBar');
+    if (lastProposals.length === 0 && (!lastOrphans || lastOrphans.length === 0)) {
+        bar.style.display = 'none';
+        bar.innerHTML = '';
+        return;
+    }
+    const matched = lastProposals.filter(p => p.status === 'exact_match' || p.status === 'reconciled').length;
+    const pending = lastProposals.filter(p => p.status === 'suggested_match' || p.status === 'probable_match').length;
+    const bankOnly = lastProposals.filter(p => p.status === 'new').length;
+    const mmOnly = (lastOrphans || []).length;
+    bar.style.display = 'flex';
+    bar.innerHTML = `
+        <span class="badge badge-success" title="Movimientos del banco que coinciden con Money Manager (ya conciliados o coincidencia exacta).">✅ ${matched} cuadran</span>
+        <span class="badge badge-warning" title="Movimientos del banco con varios candidatos posibles en Money Manager, pendientes de que elijas uno.">❓ ${pending} por revisar</span>
+        <span class="badge badge-danger" title="Movimientos del banco que no existen todavía en Money Manager.">🏦 ${bankOnly} solo en el banco</span>
+        <span class="badge badge-warning" title="Movimientos en Money Manager (dentro de la cuenta/periodo de algún fichero con cuenta asociada) que no aparecen en ningún extracto subido.">📱 ${mmOnly} solo en Money Manager</span>
+    `;
 }
 
 function prefillAddModal(date, amount, content, defaultAccount) {
