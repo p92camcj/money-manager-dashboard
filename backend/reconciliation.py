@@ -7,12 +7,69 @@ from backend.bank_statement_parser import parse_bank_date
 AMOUNT_TOLERANCE = 0.01  # margen de 1 céntimo para evitar falsos negativos por precisión de punto flotante
 
 
-def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, desc_col, window_days=3,
+def build_mm_dataframe(mm_transactions):
+    """Construye el DataFrame de transacciones de Money Manager usado por match_bank_transactions(),
+    con las columnas de tracking (`matched_origin`/`matched_destination`) inicializadas a `False`.
+
+    Debe construirse UNA SOLA VEZ por tanda de ficheros subida a la vez (`/api/analyze-excel`) y
+    pasarse como `mm_df` a la llamada de match_bank_transactions() de CADA fichero de esa tanda —
+    así el consumo de una transacción de Money Manager en un fichero es visible para los demás
+    ficheros de la misma tanda (Propuesta #4 en BACKLOG.md, resuelta en su totalidad: antes cada
+    fichero recibía su propio DataFrame reconstruido desde cero, así que dos ficheros con un
+    movimiento ambiguo (misma fecha e importe, sin relación entre sí) podían proponer AMBOS un
+    `exact_match` contra la MISMA transacción de Money Manager -- determinista, porque el primer
+    candidato por fecha exacta (`exact_date.iloc[0]`) es siempre el mismo si el DataFrame de
+    partida es idéntico -- dejando una segunda transacción real de Money Manager con esos mismos
+    fecha/importe sin proponer nunca a ningún fichero. Verificado con un caso sintético: dos
+    transacciones de Money Manager de -50€ el mismo día, y dos ficheros con una línea de -50€
+    cada uno sin relación real entre sí -- antes del fix ambos ficheros proponían la MISMA
+    transacción MM1 y MM2 quedaba invisible; con el DataFrame compartido, el segundo fichero ve
+    que MM1 ya está consumida por el primero y encuentra MM2 correctamente.
+
+    Compartir este DataFrame NO rompe el caso ya resuelto de una transferencia entre dos cuentas
+    propias con cuenta asociada en cada fichero (Propuesta #5): cada lado consume una columna
+    booleana DISTINTA de la MISMA fila (`matched_origin` el fichero del banco origen,
+    `matched_destination` el del banco destino), así que ambos ficheros siguen pudiendo resolver
+    la misma fila de Money Manager como match sin colisionar entre sí, aunque ahora compartan el
+    mismo DataFrame de partida."""
+    if not mm_transactions:
+        return pd.DataFrame(columns=['id', 'mbDate', 'mbCash', 'mbContent', 'assetId', 'destAssetId', 'is_transfer',
+                                      'matched_origin', 'matched_destination'])
+
+    mm_df = pd.DataFrame(mm_transactions)
+    mm_df['mbDate'] = pd.to_datetime(mm_df['mbDate'], errors='coerce')
+    mm_df['mbCash'] = pd.to_numeric(mm_df['mbCash'], errors='coerce').fillna(0)
+    for col in ('inOutType', 'inOutCode', 'assetId', 'toAssetId'):
+        if col not in mm_df.columns:
+            mm_df[col] = ''
+    mm_df['assetId'] = mm_df['assetId'].fillna('').astype(str)
+    mm_df['inOutType'] = mm_df['inOutType'].fillna('')
+    # Una transferencia se detecta por inOutCode ("3"=origen, "4"=lado invertido -- nunca
+    # observado en datos reales, ver CLAUDE.md), NUNCA por el texto de inOutType: se confirmó
+    # contra el móvil real (2026-07-19) que una transferencia se lee con inOutType = "Dinero
+    # gastado", no "Transferencia" -- comparar contra ese texto (como hacía esta función antes)
+    # dejaba is_transfer siempre en False para transferencias reales.
+    mm_df['is_transfer'] = mm_df['inOutCode'].fillna('').astype(str).isin(['3', '4'])
+    # Cuenta destino de una transferencia: `toAssetId` es el campo real (confirmado contra el
+    # móvil real, 2026-07-19) -- `targetAssetId`, que también declara el esquema de PC Manager
+    # (reference/all_mm.js), sale siempre vacío/null en la práctica, así que ya no se usa como
+    # fallback.
+    mm_df['destAssetId'] = mm_df['toAssetId'].fillna('').astype(str)
+
+    mm_df['matched_origin'] = False
+    mm_df['matched_destination'] = False
+    return mm_df
+
+
+def match_bank_transactions(excel_df, mm_df, date_col, amount_col, desc_col, window_days=3,
                              account_ids=None):
     """
     Algoritmo de Matching Avanzado para Conciliación Bancaria.
     excel_df: DataFrame con las transacciones del banco.
-    mm_transactions: Lista de diccionarios con las transacciones de Money Manager.
+    mm_df: DataFrame de transacciones de Money Manager ya construido por build_mm_dataframe().
+        Se muta en el sitio (columnas `matched_origin`/`matched_destination`) según se van
+        consumiendo candidatos -- pásalo COMPARTIDO entre todos los ficheros de una misma tanda
+        para que el consumo de uno sea visible para los demás (ver build_mm_dataframe()).
     account_ids: lista de `assetId` de Money Manager asociados al fichero bancario que se está
         conciliando (opcional, viene de un selector multi-selección en el frontend — típicamente
         una cuenta MÁS las tarjetas vinculadas a ella vía `linkAssetId`, ver
@@ -21,13 +78,13 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
 
         FASE 1 (prioritaria): solo se consideran candidatos cuyo `assetId` esté en
         `account_ids` — para movimientos normales, directamente; para transferencias
-        (`inOutType == 'Transferencia'`), un `assetId` de `account_ids` puede ser el origen
-        (`assetId` de la transacción) o el destino (`toAssetId`/`targetAssetId`), decidido por el
-        signo del importe bancario (negativo -> origen, positivo -> destino) para no confundir el
-        lado. Cada lado de una transferencia se consume por separado (`matched_origin` /
-        `matched_destination`), así que la misma transacción puede resolverse como match desde el
-        extracto del banco origen Y desde el del banco destino sin colisión (ver
-        CLAUDE.md, "Matching acotado por cuenta y transferencias entre bancos").
+        (`is_transfer`), un `assetId` de `account_ids` puede ser el origen (`assetId` de la
+        transacción) o el destino (`destAssetId`), decidido por el signo del importe bancario
+        (negativo -> origen, positivo -> destino) para no confundir el lado. Cada lado de una
+        transferencia se consume por separado (`matched_origin` / `matched_destination`), así
+        que la misma transacción puede resolverse como match desde el extracto del banco origen
+        Y desde el del banco destino sin colisión (ver CLAUDE.md, "Matching acotado por cuenta y
+        transferencias entre bancos").
 
         FASE 2 (fallback, solo si la fase 1 no encuentra NINGÚN candidato para una línea
         concreta dentro de la ventana de fechas/importe): repite la búsqueda para esa línea sin
@@ -46,32 +103,10 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
         a qué lado corresponde.
 
         Si `account_ids` es `None`/vacío, no hay fase 1: se busca directamente sin filtrar por
-        cuenta (comportamiento previo a la Propuesta #5/#6) — ver Propuesta #4 en BACKLOG.md,
-        limitación conocida y aceptada cuando ningún fichero de la tanda tiene cuenta asociada.
+        cuenta (comportamiento previo a la Propuesta #5/#6) — el consumo cruzado entre ficheros
+        sin cuenta asociada (Propuesta #4) lo da `mm_df` compartido, no este parámetro.
     """
     account_ids_set = {str(a) for a in account_ids} if account_ids else None
-
-    if not mm_transactions:
-        mm_df = pd.DataFrame(columns=['id', 'mbDate', 'mbCash', 'mbContent', 'assetId', 'destAssetId', 'is_transfer'])
-    else:
-        mm_df = pd.DataFrame(mm_transactions)
-        mm_df['mbDate'] = pd.to_datetime(mm_df['mbDate'], errors='coerce')
-        mm_df['mbCash'] = pd.to_numeric(mm_df['mbCash'], errors='coerce').fillna(0)
-        for col in ('inOutType', 'assetId', 'toAssetId', 'targetAssetId'):
-            if col not in mm_df.columns:
-                mm_df[col] = ''
-        mm_df['assetId'] = mm_df['assetId'].fillna('').astype(str)
-        mm_df['inOutType'] = mm_df['inOutType'].fillna('')
-        mm_df['is_transfer'] = mm_df['inOutType'].str.strip().str.lower() == 'transferencia'
-        # Cuenta destino de una transferencia: el esquema de PC Manager tiene tanto `toAssetId`
-        # como `targetAssetId` (ver reference/all_mm.js) — nos quedamos con el que venga relleno,
-        # sin asumir cuál usa el servidor real (no verificado en vivo, ver CLAUDE.md).
-        to_asset = mm_df['toAssetId'].fillna('').astype(str)
-        target_asset = mm_df['targetAssetId'].fillna('').astype(str)
-        mm_df['destAssetId'] = to_asset.where(to_asset.str.len() > 0, target_asset)
-
-    mm_df['matched_origin'] = False
-    mm_df['matched_destination'] = False
 
     excel_df[date_col] = parse_bank_date(excel_df[date_col])
     excel_df[amount_col] = pd.to_numeric(excel_df[amount_col], errors='coerce').fillna(0)
@@ -104,8 +139,18 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
                         return not row['matched_destination']
                     return False  # ninguna cuenta/tarjeta asociada participa en esta transferencia, o signo contrario
                 return row['assetId'] in account_ids_set and not row['matched_origin']
-            # Fase 2 (fallback) o sin account_ids en absoluto: comportamiento previo, consumo
-            # único sin distinguir lado de transferencia.
+            # Fase 2 (fallback) o sin account_ids en absoluto. Para una transferencia, aunque no
+            # haya contexto de cuenta que confirme qué lado es cada extracto, el SIGNO del
+            # importe bancario ya distingue el lado sin ambigüedad (negativo -> origen, positivo
+            # -> destino de esa misma fila) -- consumir columnas distintas por lado es lo que
+            # permite que dos ficheros SIN cuenta asociada que traigan los dos lados de la MISMA
+            # transferencia (Propuesta #4 en BACKLOG.md) no se bloqueen entre sí compartiendo
+            # `mm_df`. Para un movimiento normal (no transferencia) se sigue consumiendo una
+            # única columna (`matched_origin`), que es lo que permite repartir dos transacciones
+            # de Money Manager ambiguas (mismo importe/fecha, sin relación real entre sí) entre
+            # los ficheros de la tanda en vez de que ambos propongan la misma.
+            if row['is_transfer']:
+                return not row['matched_destination'] if bank_amount > 0 else not row['matched_origin']
             return not row['matched_origin']
 
         time_mask = (mm_df['mbDate'] >= bank_date - timedelta(days=window_days)) & \
@@ -154,10 +199,17 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
 
                 # Marcar como emparejado el lado correspondiente para no reutilizarlo — solo ese
                 # lado, para que el otro banco de la transferencia lo pueda seguir encontrando.
-                if is_transfer_result and trust_account_context:
-                    side = _side(best_match)
-                    transfer_role = 'destino' if side == 'destination' else 'origen'
-                    mm_df.at[best_match_pos, 'matched_destination' if side == 'destination' else 'matched_origin'] = True
+                # Como mm_df se comparte entre todos los ficheros de la tanda (ver
+                # build_mm_dataframe()), este marcado también es visible para los ficheros que
+                # aún no se han procesado (Propuesta #4). El signo del importe bancario decide
+                # la columna a marcar en CUALQUIER caso (con o sin contexto de cuenta fiable) --
+                # `transfer_role` (la etiqueta "origen"/"destino" que ve el frontend) solo se
+                # afirma cuando hay contexto de cuenta fiable, igual que antes.
+                if is_transfer_result:
+                    if trust_account_context:
+                        side = _side(best_match)
+                        transfer_role = 'destino' if side == 'destination' else 'origen'
+                    mm_df.at[best_match_pos, 'matched_destination' if bank_amount > 0 else 'matched_origin'] = True
                 else:
                     mm_df.at[best_match_pos, 'matched_origin'] = True
             else:

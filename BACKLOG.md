@@ -16,30 +16,7 @@ estables) y `CHANGELOG.md` (qué cambió en cada versión) — este fichero es "
 
 ## Bugs pendientes
 
-### Bug #1: un fallo de conexión con el móvil se presenta como resultado válido
-
-- **Estado:** pendiente de resolver.
-- **Detectado:** 2026-07-18, diagnosticado con `logs/app.log` real (ver commit `5e24930`, que
-  introdujo ese logging).
-
-Cuando `GET /moneyBook/getDataByPeriod` falla (`ConnectionError` — en el caso real que lo destapó,
-porque Money Manager se cerró en el móvil sin querer, lo que probablemente mató el servidor PC
-Manager en segundo plano), `analyze_excel()` en `app.py` sigue adelante con `real_transactions=[]`
-en silencio. El usuario ve "N nuevos" en la UI sin saber que en realidad no hubo conexión real con
-el móvil — parece que no hay ningún movimiento duplicado, cuando en realidad no se pudo comprobar.
-
-Pendiente:
-- El backend no debe tratar un fallo de conexión como "cero transacciones" válidas — debe
-  devolver un error explícito y distinguible (p. ej. un campo `mm_connection_error: true` en la
-  respuesta de `/api/analyze-excel`, o un código de estado HTTP distinto de 200).
-- Añadir un aviso **visible y persistente** en la interfaz cuando se pierde la conexión con el
-  móvil — no solo al fallar el análisis de un Excel puntual — para que el usuario lo note en el
-  momento y pueda reabrir Money Manager si hace falta.
-  - Ya existe `updateConnectionStatus()` / `#connectionStatus` en `static/script.js`, pero **solo
-    se llama desde `loadData()`** (carga inicial/periódica) — no se dispara si un proxy individual
-    falla a mitad de sesión (p. ej. durante `/api/analyze-excel` o `/api/budget-hierarchy`).
-    Probablemente sea más sencillo extender ese indicador existente para que también reaccione a
-    fallos de proxy a mitad de sesión, en vez de crear un aviso nuevo desde cero.
+Ninguno abierto ahora mismo — ver "Resueltos" más abajo para el histórico.
 
 ---
 
@@ -70,33 +47,53 @@ las opciones más económicas de firma con reputación acumulada tipo SignPath p
 código abierto) eliminaría o reduciría mucho ambos problemas. No se ha hecho en esta tarea por ser
 un coste/proceso externo al código -- queda anotado para valorar si el proyecto gana tracción.
 
-### Propuesta #4: matching no comparte estado entre ficheros de la misma tanda
-
-- **Estado:** resuelto PARCIALMENTE — solo cuando el usuario asocia una cuenta de Money Manager a
-  cada fichero (Propuesta #5). Sigue sin resolver cuando ningún fichero de la tanda tiene cuenta
-  asociada.
-- **Detectado:** 2026-07-18, durante la implementación de subida múltiple (Propuesta #3).
-
-Al subir varios ficheros a la vez, cada uno se concilia contra Money Manager por separado
-(`match_bank_transactions()` se llama una vez por fichero, cada una con su propio estado interno de
-"ya emparejado"). Si el mismo movimiento real aparece en dos ficheros distintos a la vez — p. ej.
-una transferencia entre dos cuentas propias del usuario, visible tanto en el extracto del banco
-origen como en el del banco destino — cada fichero podría proponerlo como "nuevo movimiento" sin
-saber que el otro fichero ya lo vio.
-
-**Caso de transferencias resuelto en Propuesta #5** (2026-07-18): cuando cada fichero tiene su
-cuenta asociada, `match_bank_transactions()` reconoce que ambas líneas (la negativa del banco
-origen, la positiva del banco destino) corresponden a los dos lados de la MISMA transacción de
-Money Manager y las resuelve como `exact_match`/`probable_match` en vez de "nuevo" — ver
-`CLAUDE.md`, sección "Matching acotado por cuenta y transferencias entre bancos".
-
-**Sigue pendiente**: sin cuenta asociada (uso mínimo del selector, o cualquier otro tipo de
-movimiento duplicado entre ficheros que no sea una transferencia con cuentas asociadas), la
-limitación original persiste tal cual estaba documentada.
-
 ---
 
 ## Resueltos
+
+### Bug #1: un fallo de conexión con el móvil se presenta como resultado válido
+
+- **Resuelto:** 2026-07-19, versión `0.8.4.32`.
+- **Detectado:** 2026-07-18, diagnosticado con `logs/app.log` real (ver commit `5e24930`, que
+  introdujo ese logging).
+
+`analyze_excel()`, `get_budget_hierarchy()` y el proxy genérico ya no tratan un
+`ConnectionError`/`Timeout` al hablar con el móvil como "cero transacciones" válidas — devuelven
+`{"mm_connection_error": true}` con HTTP 503 (504 en timeout), y `analyze_excel()` aborta ANTES de
+generar ninguna propuesta de conciliación en ese caso. `updateConnectionStatus()`/
+`#connectionStatus` (ya existente) se extendió, tal y como ya sugería este mismo ítem, para
+reaccionar también a un fallo a mitad de sesión (no solo desde `loadData()`) — `fetchAssets`,
+`fetchTransactions`, `fetchBudgets`, `fetchCategoryMap` y `confirmUploadFiles()` lo comprueban.
+Detalle completo en `CLAUDE.md`, sección "Aviso de conexión perdida con el móvil".
+
+### Propuesta #4: matching no comparte estado entre ficheros de la misma tanda
+
+- **Resuelto en su totalidad:** 2026-07-19, versión `0.8.4.32` (ya estaba resuelto parcialmente
+  desde la Propuesta #5, 2026-07-18, para el caso con cuenta asociada).
+- **Detectado:** 2026-07-18, durante la implementación de subida múltiple (Propuesta #3).
+
+Nueva `backend/reconciliation.build_mm_dataframe()` construye el DataFrame de transacciones de
+Money Manager UNA SOLA VEZ por tanda y se pasa compartido (mismo objeto, mutado en el sitio) a
+cada llamada de `match_bank_transactions()` de la tanda, en vez de reconstruirse desde cero por
+fichero como antes. Verificado con un caso sintético real (no solo teórico): dos transacciones de
+Money Manager con la misma fecha/importe, sin relación entre sí, cada una en un fichero bancario
+distinto — antes, ambos ficheros proponían determinísticamente la MISMA transacción (el primer
+candidato por fecha exacta, siempre el mismo si el DataFrame de partida es idéntico) y la segunda
+quedaba invisible para siempre; con el DataFrame compartido, cada fichero encuentra la
+transacción que le corresponde.
+
+**Hallazgo colateral corregido en el mismo commit**: `is_transfer` en `build_mm_dataframe()`
+comparaba `inOutType == 'Transferencia'`, un texto que se confirmó (2026-07-19, ver versión
+`0.8.3.30`) que NUNCA aparece en datos reales (el texto real es "Dinero gastado") — `is_transfer`
+era siempre `False` para transferencias reales, silenciosamente, desde que existe esta función.
+Corregido a detectar por `inOutCode` ("3"/"4"). Además, sin cuenta asociada (el caso concreto que
+pedía esta propuesta) el consumo por lado de una transferencia (`matched_origin`/
+`matched_destination`) ahora también se decide por el signo del importe bancario en vez de
+consumir siempre `matched_origin` sin distinguir — necesario para que dos ficheros SIN cuenta
+asociada que traigan los dos lados de la MISMA transferencia entre cuentas propias no se
+bloqueen entre sí al compartir el DataFrame. Detalle completo con 4 casos sintéticos verificados
+en `CLAUDE.md`, secciones "Matching compartido entre ficheros de la misma tanda" y "Matching
+acotado por cuenta y transferencias entre bancos".
 
 ### Bug #4: las transferencias internas de Money Manager no se distinguían en la tabla de Transacciones, y editarlas las rompía
 

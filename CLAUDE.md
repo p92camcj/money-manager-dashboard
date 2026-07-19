@@ -79,15 +79,18 @@ app.py             Flask app. Sirve static/, y expone:
                               sección dedicada). Se calcula el rango de fechas COMBINADO de
                               todos los ficheros de la tanda y se hace una única llamada a
                               `getDataByPeriod` — no una por fichero. El matching
-                              (`match_bank_transactions`) se hace por SEPARADO para cada fichero
-                              contra ese mismo conjunto de transacciones del móvil, pasando la
-                              lista `account_ids` de ese fichero si la tiene (ver "Matching
-                              acotado por cuenta y transferencias entre bancos" más abajo). Sin
-                              cuentas asociadas en ningún fichero de la tanda, dos ficheros siguen
-                              sin enterarse el uno del otro (limitación conocida, ver `BACKLOG.md` —
-                              un movimiento que aparezca en dos extractos a la vez, p.ej. una
-                              transferencia entre cuentas propias, puede proponerse como "nuevo"
-                              en ambos). Cada propuesta lleva `source_label` y `source_filename`,
+                              (`match_bank_transactions`) se hace por SEPARADO para cada fichero,
+                              pero TODOS los ficheros de la tanda comparten el mismo DataFrame de
+                              transacciones del móvil (`build_mm_dataframe()`, ver "Matching
+                              compartido entre ficheros de la misma tanda" más abajo), pasando
+                              además la lista `account_ids` de ese fichero si la tiene (ver
+                              "Matching acotado por cuenta y transferencias entre bancos"). Si el
+                              móvil no responde (`ConnectionError`/`Timeout`/error HTTP al
+                              consultar `getDataByPeriod`), se aborta ANTES de generar ninguna
+                              propuesta con `{"mm_connection_error": true}` y HTTP 503 — nunca se
+                              trata un fallo de conexión como "cero transacciones" (Bug #1 en
+                              `BACKLOG.md`, resuelto 2026-07-19; ver también "Aviso de conexión
+                              perdida" más abajo). Cada propuesta lleva `source_label` y `source_filename`,
                               y `source_id` va prefijado por índice de fichero (`f0_...`,
                               `f1_...`) para que sea único entre ficheros de la misma tanda. Si un
                               fichero individual no tiene estructura reconocible, no aborta toda
@@ -102,7 +105,10 @@ app.py             Flask app. Sirve static/, y expone:
                               permanente (a consola Y a
                               `logs/app.log`, ver "Logging de diagnóstico" más abajo) para depurar
                               por qué la conciliación no encuentra matches.
-  /api/budget-hierarchy    -> pide transacciones + resumen de presupuesto al móvil, llama a BudgetEngine
+  /api/budget-hierarchy    -> pide transacciones + resumen de presupuesto al móvil, llama a
+                              BudgetEngine. Mismo criterio que /api/analyze-excel ante un fallo de
+                              conexión real con el móvil: `mm_connection_error: true`, HTTP 503,
+                              en vez de un 500 genérico indistinguible de cualquier otro error.
   /api/config              -> GET/POST de config.json (IP/puerto del móvil)
   /api/version             -> versión actual de la app (ver "Versionado")
 
@@ -435,14 +441,37 @@ solape en fechas con uno ya revisado.
   (los mismos campos de la propuesta, para recalcular la clave) y `mm_id` (el candidato elegido);
   escribe la entrada en `data/reconciliations.json`.
 
+### Matching compartido entre ficheros de la misma tanda (`build_mm_dataframe()`)
+
+**Resuelto 2026-07-19 (Propuesta #4 de `BACKLOG.md`).** `/api/analyze-excel` construye el
+DataFrame de transacciones de Money Manager **una sola vez por tanda** con
+`backend/reconciliation.build_mm_dataframe()`, y lo pasa **compartido** (mismo objeto, mutado en
+el sitio) a la llamada de `match_bank_transactions()` de CADA fichero de esa tanda, en vez de que
+cada fichero reconstruyera su propio DataFrame desde cero como antes.
+
+**Por qué hacía falta esto — bug real, no solo teórico, confirmado con un caso sintético**: sin
+compartir estado, si dos transacciones de Money Manager tenían la MISMA fecha e importe (p. ej.
+dos compras de 50€ el mismo día, sin relación real entre sí) y cada una aparecía en un fichero
+bancario distinto de la misma tanda, **ambos ficheros proponían determinísticamente la MISMA
+transacción de Money Manager como `exact_match`** (el primer candidato por fecha exacta,
+`exact_date.iloc[0]`, es siempre el mismo si el DataFrame de partida es idéntico) — dejando la
+SEGUNDA transacción real de Money Manager invisible para siempre, sin proponérsela a ningún
+fichero. Verificado con exactamente ese caso sintético (dos transacciones MM de -50€ el mismo día,
+dos ficheros con una línea de -50€ cada uno): con el DataFrame compartido, el segundo fichero ve
+que la primera transacción ya está consumida y encuentra correctamente la segunda.
+
+Compartir el DataFrame NO rompe el caso de una transferencia entre dos cuentas propias con cuenta
+asociada en cada fichero (ver más abajo): cada lado consume una columna booleana DISTINTA de la
+MISMA fila (`matched_origin` / `matched_destination`), así que ambos ficheros siguen resolviendo
+la misma fila como match sin colisionar, aunque ahora partan del mismo DataFrame.
+
 ### Matching acotado por cuenta y transferencias entre bancos
 
 Al etiquetar cada fichero subido (ver `/api/analyze-excel` más arriba), el usuario puede además
 asociarle **opcionalmente** una o varias cuentas/tarjetas reales de Money Manager (`accountIds`
 en el form-data, `account_ids` en `match_bank_transactions()`, lista) desde un selector
 multi-selección poblado con `assetsData` en el frontend (`flattenAssets()` en `script.js`). Sin
-cuentas asociadas, el comportamiento es exactamente el de antes (búsqueda sin filtrar por cuenta,
-una transferencia se consume una sola vez en conjunto — ver Propuesta #4 en `BACKLOG.md`).
+cuentas asociadas, no hay fase 1 (ver más abajo): se busca directamente sin filtrar por cuenta.
 
 **Cuentas y tarjetas — `linkAssetId`**: `getAssetData` devuelve tarjetas vinculadas a una cuenta
 (p.ej. una tarjeta de débito) como assets con su **propio `assetId`** (distinto del de la cuenta)
@@ -471,55 +500,85 @@ genuinamente nuevos).
 prioriza — los candidatos a `account_ids`, para reducir falsos positivos entre cuentas distintas
 con importes parecidos:
 
-- **Movimiento normal** (`inOutType` distinto de `Transferencia`): solo se consideran candidatos
-  cuyo `assetId` esté en `account_ids`.
-- **Transferencia** (`inOutType == 'Transferencia'`): una transferencia en Money Manager es UNA
-  sola transacción con `assetId` = cuenta origen y `toAssetId`/`targetAssetId` = cuenta destino —
-  pero en dos extractos bancarios reales (el del banco origen y el del banco destino) aparece como
-  DOS líneas distintas (una negativa, una positiva). Un elemento de `account_ids` puede coincidir
-  con el origen o con el destino de la misma transacción de Money Manager; se usa el signo del
-  importe bancario para decidir el lado (negativo → origen, positivo → destino) y no confundirlos.
-  Cada lado se marca como "consumido" por separado (`matched_origin` / `matched_destination` en el
-  DataFrame interno de `mm_df`, no un único flag `matched` como en el resto del matching) — así, la
-  MISMA transacción de Money Manager puede resolverse como match desde el fichero del banco origen
-  Y desde el fichero del banco destino, sin que el primero en procesarse "se quede" con ella (cada
-  fichero se sigue analizando en una llamada independiente a `match_bank_transactions()`, así que
-  esto funciona sin que un fichero necesite saber nada del otro). Dentro de un mismo fichero, un
-  lado ya consumido no se puede reclamar dos veces (dos líneas bancarias con igual importe no
-  pueden reclamar el mismo lado).
-  - **Campo real de la cuenta destino sin verificar en vivo**: el esquema de columnas de PC
-    Manager (`reference/all_mm.js`) declara tanto `toAssetId` como `targetAssetId`; no hay
-    certeza de cuál rellena realmente el XML de `getDataByPeriod` (ver la inconsistencia ya
-    documentada más arriba entre vocabulario de lectura y escritura) — sigue sin verificar porque
-    no hubo ninguna transferencia real en el rango consultado el 2026-07-19 (1165 transacciones,
-    0 transferencias). `match_bank_transactions()` se queda con el que venga relleno de los dos,
-    sin asumir cuál es. Si compruebas contra el móvil real cuál es, actualiza esto.
+- **Movimiento normal** (no transferencia): solo se consideran candidatos cuyo `assetId` esté en
+  `account_ids`.
+- **Transferencia**: `build_mm_dataframe()` detecta una transferencia por **`inOutCode` ("3" o
+  "4"), NUNCA por el texto de `inOutType`** — resuelto 2026-07-19 tras confirmar contra el móvil
+  real que una transferencia se lee con `inOutType = "Dinero gastado"`, no `"Transferencia"` (ver
+  más abajo, "Tabla de transacciones — transferencias"); comparar contra ese texto (como hacía
+  esta función antes de esta fecha) dejaba `is_transfer` siempre en `False` para transferencias
+  reales — un bug puramente teórico hasta entonces, nunca antes probado con el `inOutType` real.
+  Una transferencia en Money Manager es UNA sola transacción con `assetId` = cuenta origen y
+  `toAssetId` = cuenta destino (el campo real, confirmado 2026-07-19 — `targetAssetId` ya no se
+  usa, ver más abajo) — pero en dos extractos bancarios reales (el del banco origen y el del
+  banco destino) aparece como DOS líneas distintas (una negativa, una positiva). Un elemento de
+  `account_ids` puede coincidir con el origen o con el destino de la misma transacción de Money
+  Manager; se usa el signo del importe bancario para decidir el lado (negativo → origen, positivo
+  → destino) y no confundirlos. Cada lado se marca como "consumido" por separado (`matched_origin`
+  / `matched_destination` en el DataFrame de `mm_df`, no un único flag `matched` como en el resto
+  del matching) — así, la MISMA transacción de Money Manager puede resolverse como match desde el
+  fichero del banco origen Y desde el fichero del banco destino, sin que el primero en procesarse
+  "se quede" con ella. Dentro de un mismo fichero, un lado ya consumido no se puede reclamar dos
+  veces (dos líneas bancarias con igual importe no pueden reclamar el mismo lado).
 
-**FASE 2 (fallback)**: si para una línea concreta del banco la fase 1 no encuentra NINGÚN
-candidato dentro de la ventana de fechas/importe (pero sí hay transacciones de Money Manager con
-esa fecha/importe en general), se repite la búsqueda para esa línea sin el filtro de
-`account_ids` — igual que el comportamiento de antes de introducir el filtro por cuenta. El
-resultado se marca con `account_fallback: true` (frontend: badge "⚠️ Fuera de la cuenta
-esperada") para que el usuario lo revise con más atención antes de confirmar — no es tan fiable
-como un match dentro de las cuentas/tarjetas que él mismo marcó. En fase 2 una transferencia se
-consume como movimiento normal (un único `matched_origin`, sin distinguir lado) porque fuera del
-contexto de cuenta no hay forma fiable de saber a qué lado corresponde.
+**FASE 2 (fallback, y también el camino sin `account_ids` en absoluto)**: si para una línea
+concreta del banco la fase 1 no encuentra NINGÚN candidato dentro de la ventana de fechas/importe
+(pero sí hay transacciones de Money Manager con esa fecha/importe en general), se repite la
+búsqueda para esa línea sin el filtro de `account_ids`. El resultado se marca con
+`account_fallback: true` (frontend: badge "⚠️ Fuera de la cuenta esperada") para que el usuario
+lo revise con más atención antes de confirmar — no es tan fiable como un match dentro de las
+cuentas/tarjetas que él mismo marcó.
 
-- **Sin `account_ids` en el fichero**: no hay fase 1, se busca directamente sin filtrar (fase 2
-  desde el principio) — no se intenta adivinar el lado de una transferencia, comportamiento
-  previo intacto.
+- **Sin contexto de cuenta fiable (fase 2, o directamente sin `account_ids` en el fichero) una
+  transferencia SÍ distingue lado, por el signo del importe bancario** (resuelto 2026-07-19,
+  Propuesta #4): negativo consume `matched_origin`, positivo consume `matched_destination` —
+  antes de esta fecha, fuera del contexto de cuenta se consumía siempre `matched_origin` sin
+  distinguir signo, lo que rompía el caso de dos ficheros SIN cuenta asociada que trajeran los
+  dos lados de la MISMA transferencia entre cuentas propias (el segundo fichero, con el DataFrame
+  ya compartido entre ficheros — ver arriba —, se encontraba el lado origen ya consumido por el
+  primero y no podía resolver su propio lado destino). El `transfer_role` (`'origen'`/`'destino'`)
+  que ve el frontend solo se afirma con contexto de cuenta fiable (fase 1 sin fallback) — en fase
+  2 o sin `account_ids`, el consumo por signo ya evita la colisión, pero `transfer_role` se deja
+  en `None` porque no hay certeza de cuál extracto es cuál cuenta, solo de qué lado es cada línea.
 - Cada propuesta resultante lleva `is_transfer` (bool), `account_fallback` (bool) y, si aplica y
-  se resolvió en fase 1, `transfer_role` (`'origen'`/`'destino'`/`None` — en fase 2 siempre
-  `None`, no hay contexto de cuenta fiable para determinarlo); cada candidato de `candidates[]`
-  lleva su propio `is_transfer`. El frontend usa esto para mostrar badges "🔁 Transferencia
-  interna" y "⚠️ Fuera de la cuenta esperada" en vez de dejar que parezcan un duplicado exacto sin
-  explicación.
-- **Transferencias verificadas solo con datos sintéticos** (no hay en `samples/` ningún par de
-  extractos reales que compartan una transferencia entre bancos todavía, y no hubo ninguna
-  transferencia real en el rango consultado en vivo el 2026-07-19) — ver script de verificación
-  usado durante el
-  desarrollo, no comprometido al repo. Si aparece un caso real que no encaje, revisar primero el
-  campo de cuenta destino (punto anterior) antes de asumir que la lógica de lados está mal.
+  se resolvió con contexto de cuenta fiable, `transfer_role` (`'origen'`/`'destino'`/`None`);
+  cada candidato de `candidates[]` lleva su propio `is_transfer`. El frontend usa esto para
+  mostrar badges "🔁 Transferencia interna" y "⚠️ Fuera de la cuenta esperada" en vez de dejar que
+  parezcan un duplicado exacto sin explicación.
+- **Transferencias entre BANCOS verificadas solo con datos sintéticos** (no hay en `samples/`
+  ningún par de extractos reales que compartan una transferencia entre bancos todavía) — ver
+  scripts de verificación usados durante el desarrollo, no comprometidos al repo. La detección de
+  transferencia en sí (`inOutCode`, campo `toAssetId`) sí está verificada contra el móvil real
+  (ver "Tabla de transacciones — transferencias" más abajo); lo que sigue siendo sintético es
+  específicamente el escenario de dos EXTRACTOS BANCARIOS reales compartiendo los dos lados.
+
+## Aviso de conexión perdida con el móvil
+
+**Resuelto 2026-07-19 (Bug #1 de `BACKLOG.md`).** Antes, un fallo de conexión con el móvil a
+mitad de sesión (el usuario cerró Money Manager sin querer, lo que mata el servidor PC Manager en
+segundo plano) se trataba en el backend como "cero transacciones" válidas — `analyze_excel()`
+seguía adelante con `real_transactions=[]` en silencio, generando un falso "nuevo movimiento" por
+cada línea del Excel, como si de verdad no existieran en Money Manager. El indicador de conexión
+del header (`#connectionStatus` / `updateConnectionStatus()` en `static/script.js`) solo se
+actualizaba desde `loadData()` (carga inicial/periódica), así que un fallo a mitad de sesión no lo
+reflejaba — el usuario podía ver "En Línea" en el header mientras el backend ya no podía hablar
+con el móvil.
+
+- **Backend**: `/api/proxy/<endpoint>` (genérico), `/api/analyze-excel` y `/api/budget-hierarchy`
+  devuelven `{"mm_connection_error": true}` (además del `demo_mode` ya existente en el proxy
+  genérico, por compatibilidad) con un status HTTP distinto de 200 (503, o 504 en timeout) ante
+  cualquier `requests.exceptions.RequestException` (`ConnectionError`, `Timeout`, o un status de
+  error que `raise_for_status()` convierte en excepción) al hablar con el móvil. `analyze_excel()`
+  aborta ANTES de llamar a `match_bank_transactions()` en este caso — nunca genera propuestas
+  sobre una lista de transacciones vacía por fallo de conexión.
+- **Frontend**: `isMmConnectionError(data)` es el único punto que comprueba ese campo. Todas las
+  funciones que dependen del móvil (`fetchAssets`, `fetchTransactions`, `fetchBudgets`,
+  `fetchCategoryMap`, y `confirmUploadFiles()` para `/api/analyze-excel`) lo comprueban y llaman a
+  `updateConnectionStatus('offline')` — se **extendió** el indicador ya existente para que
+  reaccione a cualquier fallo a mitad de sesión, no solo desde `loadData()`, tal y como ya sugería
+  `BACKLOG.md` (en vez de crear un aviso nuevo desde cero). Cada una de esas funciones también
+  llama a `updateConnectionStatus('online')` en su propio camino de éxito, para que la
+  recuperación de conexión se refleje sin esperar al siguiente `loadData()` completo.
 
 ## Distribución con ejecutable de Windows (segunda vía, "amigable")
 

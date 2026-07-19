@@ -44,7 +44,7 @@ _file_handler = RotatingFileHandler(
 _file_handler.setFormatter(_log_formatter)
 logger.addHandler(_file_handler)
 
-from backend.reconciliation import match_bank_transactions
+from backend.reconciliation import match_bank_transactions, build_mm_dataframe
 from backend.reconciliation_store import make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation
 from backend.bank_statement_parser import parse_bank_statement, parse_bank_date, BankStatementFormatError
 from backend.budget_engine import BudgetEngine
@@ -201,10 +201,14 @@ def proxy(endpoint):
         return Response(text, status=resp.status_code, mimetype='application/json', content_type='application/json; charset=utf-8')
             
     except requests.exceptions.Timeout:
-        return jsonify({"error": "Timeout", "demo_mode": True}), 504
+        # mm_connection_error, además del ya existente demo_mode (Bug #1, BACKLOG.md): campo
+        # único que el frontend comprueba en todos los endpoints que dependen del móvil, para
+        # que un fallo a mitad de sesión (no solo en la carga inicial) actualice el indicador de
+        # conexión -- ver updateConnectionStatus()/reportMmConnection() en static/script.js.
+        return jsonify({"error": "Timeout", "demo_mode": True, "mm_connection_error": True}), 504
     except Exception as e:
         logger.error(f"Proxy Error: {e}")
-        return jsonify({"error": str(e), "demo_mode": True}), 503
+        return jsonify({"error": str(e), "demo_mode": True, "mm_connection_error": True}), 503
 
 @app.route('/api/analyze-excel', methods=['POST'])
 def analyze_excel():
@@ -220,8 +224,14 @@ def analyze_excel():
     sobre cuál `assetId` usa para cada uno. El filtro por cuenta además permite que una
     transferencia entre dos cuentas propias (p.ej. Cajasur -> Revolut) se resuelva como match
     tanto desde el extracto del banco origen como desde el del banco destino, sin que uno
-    "consuma" el lado del otro. Sin cuentas asociadas en ningún fichero de la tanda, dos ficheros
-    siguen sin enterarse el uno del otro (limitación conocida, ver Propuesta #4 en BACKLOG.md)."""
+    "consuma" el lado del otro. El DataFrame de transacciones de Money Manager
+    (`build_mm_dataframe()`) se construye UNA SOLA VEZ para toda la tanda y se pasa COMPARTIDO a
+    cada fichero (Propuesta #4 en BACKLOG.md, resuelta) -- así, si dos ficheros de la misma tanda
+    contienen el mismo movimiento real (con o sin cuenta asociada), el primero que lo consuma
+    dentro de la tanda no se lo "queda" para el segundo: el segundo ve que ya está consumido y, o
+    bien no lo repite como el mismo `exact_match` (evitando dejar una segunda transacción real de
+    Money Manager con la misma fecha/importe invisible para siempre), o bien lo resuelve como el
+    lado opuesto de una transferencia si aplica."""
     uploaded_files = request.files.getlist('files')
     labels = request.form.getlist('labels')
     account_ids_raw = request.form.getlist('accountIds')  # uno por fichero, ids separados por comas
@@ -273,19 +283,32 @@ def analyze_excel():
             logger.info(f"[analyze-excel] Money Manager respondió {resp.status_code} | {len(real_transactions)} transacciones recibidas")
             for sample in real_transactions[:3]:
                 logger.info(f"[analyze-excel]   muestra: { {k: sample.get(k) for k in ('mbDate', 'mbCash', 'mbContent', 'inOutType', 'assetId')} }")
-        except Exception as e:
-            logger.error(f"[analyze-excel] ERROR consultando Money Manager en {mm_url}: {e}")
-            real_transactions = []
+        except requests.exceptions.RequestException as e:
+            # Bug #1 (BACKLOG.md): un fallo de conexión real con el móvil (ConnectionError,
+            # Timeout, o un status de error que raise_for_status() convierte en excepción) NO
+            # debe tratarse como "cero transacciones" -- seguir adelante con real_transactions=[]
+            # generaría un "nuevo movimiento" falso por cada línea del/de los Excel(s), como si de
+            # verdad no existieran en Money Manager, cuando en realidad no se pudo comprobar.
+            # Se aborta aquí con un error explícito y distinguible (`mm_connection_error: true`,
+            # HTTP 503) en vez de continuar con el matching.
+            logger.error(f"[analyze-excel] ERROR DE CONEXIÓN consultando Money Manager en {mm_url}: {e}")
+            return jsonify({
+                "error": "No se pudo conectar con Money Manager en el móvil -- comprueba que la app esté abierta y PC Manager activo, y vuelve a intentarlo.",
+                "mm_connection_error": True,
+                "file_errors": file_errors,
+            }), 503
 
-        # Matching independiente por fichero contra el mismo real_transactions — dos ficheros no
-        # se enteran el uno del otro (ver docstring de la función).
+        # Matching por fichero, compartiendo el mismo DataFrame de Money Manager (ver
+        # build_mm_dataframe() y Propuesta #4 en BACKLOG.md) para que el consumo de una
+        # transacción en un fichero sea visible para los demás ficheros de la misma tanda.
+        mm_df = build_mm_dataframe(real_transactions)
         reconciliations = load_reconciliation_store()
         all_proposals = []
         reconciled_count = 0
         for file_idx, pf in enumerate(parsed_files):
             proposals = match_bank_transactions(
                 excel_df=pf['df'],
-                mm_transactions=real_transactions,
+                mm_df=mm_df,
                 date_col='Fecha',
                 amount_col='Importe',
                 desc_col='Concepto',
@@ -349,31 +372,43 @@ def get_budget_hierarchy():
     phone_url = get_phone_url()
     start_date = request.args.get('startDate', '2026-03-01')
     end_date = request.args.get('endDate', '2026-03-31')
-    
+
     try:
         # Fetch transacciones y presupuestos del móvil en paralelo para este motor
         resp_trans = requests.get(f"{phone_url}/moneyBook/getDataByPeriod?startDate={start_date}&endDate={end_date}", timeout=10)
+        resp_trans.raise_for_status()
         transactions = xml_to_dict(resp_trans.content)
-        
+
         resp_budgets = requests.get(f"{phone_url}/moneyBook/getSummaryDataByPeriod?startDate={start_date}&endDate={end_date}", timeout=10)
+        resp_budgets.raise_for_status()
         # Forzar decodificación UTF-8 para evitar caracteres extraños ("ð¤ AHORRO")
         resp_text = resp_budgets.content.decode('utf-8', errors='ignore')
-        
+
         # Parse budgets JSON using clean_json
         try:
             budgets = json.loads(resp_text)
         except:
             cleaned = clean_json(resp_text)
             budgets = json.loads(cleaned)
-            
+
         engine = BudgetEngine(base_currency='EUR')
         hierarchy = engine.process_hierarchy(transactions, budgets)
         flows = engine.calculate_transfers_and_balances(transactions)
-        
+
         return jsonify({
             'hierarchy': hierarchy,
             'cashflows': flows
         })
+    except requests.exceptions.RequestException as e:
+        # Bug #1 (BACKLOG.md): mismo criterio que analyze_excel() -- un fallo de conexión real
+        # con el móvil no debe confundirse con "presupuesto vacío", error explícito y
+        # distinguible en vez de dejar que un JSONDecodeError posterior sobre una respuesta
+        # vacía/HTML de error se devuelva como un 500 genérico indistinguible de cualquier otro.
+        logger.error(f"[budget-hierarchy] ERROR DE CONEXIÓN con Money Manager: {e}")
+        return jsonify({
+            "error": "No se pudo conectar con Money Manager en el móvil -- comprueba que la app esté abierta y PC Manager activo.",
+            "mm_connection_error": True,
+        }), 503
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

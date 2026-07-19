@@ -138,46 +138,63 @@ function updateConnectionStatus(state) {
     }
 }
 
+// Bug #1 (BACKLOG.md): el backend distingue un fallo real de conexión con el móvil (campo
+// `mm_connection_error`, o el `demo_mode` ya existente del proxy genérico) de un "cero
+// resultados" válido. Antes, updateConnectionStatus() solo se llamaba desde loadData() -- un
+// fallo a mitad de sesión (al subir un Excel, al cambiar de periodo...) no lo reflejaba en el
+// indicador de conexión del header, que se quedaba mostrando "En Línea" aunque ya no lo estuviera.
+// Cualquier fetch* que dependa del móvil comprueba esto y actualiza el indicador compartido, en
+// vez de crear un aviso nuevo.
+function isMmConnectionError(data) {
+    return !!(data && (data.mm_connection_error || data.demo_mode));
+}
+
 async function fetchAssets() {
     try {
         const resp = await fetch('/api/proxy/moneyBook/getAssetData', { method: 'GET' });
         const data = await resp.json();
+        if (isMmConnectionError(data)) { updateConnectionStatus('offline'); return false; }
         if (data && !data.error) {
             assetsData = data;
             setCache('assets', data);
             renderAccountList();
+            updateConnectionStatus('online');
             return true;
         }
-    } catch (e) { return false; }
+    } catch (e) { updateConnectionStatus('offline'); return false; }
 }
 
 async function fetchTransactions() {
     try {
         const resp = await fetch(`/api/proxy/moneyBook/getDataByPeriod?startDate=${currentPeriod.startDate}&endDate=${currentPeriod.endDate}`);
         const data = await resp.json();
+        if (isMmConnectionError(data)) { updateConnectionStatus('offline'); return false; }
         if (Array.isArray(data)) {
             transactionsData = data;
             setCache('transactions', data);
             if (window.AnalyticsEngine) AnalyticsEngine.init(transactionsData);
             if (currentTab === 'transactions') renderTransactions();
             updateSummaries();
+            updateConnectionStatus('online');
             return true;
         }
-    } catch { return false; }
+    } catch { updateConnectionStatus('offline'); return false; }
 }
 
 async function fetchBudgets() {
     try {
         const resp = await fetch(`/api/budget-hierarchy?startDate=${currentPeriod.startDate}&endDate=${currentPeriod.endDate}`);
         const data = await resp.json();
+        if (isMmConnectionError(data)) { updateConnectionStatus('offline'); return false; }
         if (data && data.hierarchy) {
             budgetsData = data.hierarchy;
             setCache('budgets', data.hierarchy);
             if (currentTab === 'budgets') renderBudgets();
             if (currentTab === 'dashboard') renderChart();
+            updateConnectionStatus('online');
             return true;
         }
-    } catch { return false; }
+    } catch { updateConnectionStatus('offline'); return false; }
 }
 
 // moneyBook/getInitData es el mismo endpoint que usa el cliente oficial de PC Manager para
@@ -198,15 +215,17 @@ async function fetchCategoryMap() {
     try {
         const resp = await fetch('/api/proxy/moneyBook/getInitData');
         const data = await resp.json();
+        if (isMmConnectionError(data)) { updateConnectionStatus('offline'); return false; }
         if (data && !data.error) {
             categoryMapData = {
                 income: buildCategoryMap(data.category_0),
                 expense: buildCategoryMap(data.category_1),
             };
             setCache('categoryMap', categoryMapData);
+            updateConnectionStatus('online');
             return true;
         }
-    } catch { return false; }
+    } catch { updateConnectionStatus('offline'); return false; }
 }
 
 // --- RENDERIZADO UI ---
@@ -1012,11 +1031,22 @@ async function confirmUploadFiles() {
         const res = await fetch('/api/analyze-excel', { method: 'POST', body: formData });
         const data = await res.json();
 
+        // Bug #1 (BACKLOG.md): un fallo de conexión real con el móvil a mitad de sesión (p.ej.
+        // se cerró Money Manager mientras se subía el Excel) no debe mostrarse como si fuera un
+        // error cualquiera ni, sobre todo, dejar renderizar propuestas como si fueran válidas --
+        // el backend ya aborta antes de generar ninguna en este caso (mm_connection_error).
+        if (isMmConnectionError(data)) {
+            updateConnectionStatus('offline');
+            list.innerHTML = `<p style="color:#f87171">⚠️ No se pudo conectar con Money Manager en el móvil. No se ha generado ninguna propuesta -- verifica que la app esté abierta y PC Manager activo, y vuelve a intentarlo.</p>`;
+            return;
+        }
+
         if (!data || data.error) {
             list.innerHTML = `<p style="color:#f87171">Error al analizar: ${data ? data.error : 'Desconocido'}</p>`;
             return;
         }
 
+        updateConnectionStatus('online');
         lastProposals = data.proposals || [];
         currentLabelFilter = 'all';
 

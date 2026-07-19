@@ -1,6 +1,38 @@
 # Changelog
 
-Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
+Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
+sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
+
+## 0.8.4.32 - 2026-07-19
+
+Corrección de dos ítems del backlog (Tarea 1 de una sesión de trabajo):
+
+- **Bug #1 (conexión silenciosa con el móvil)**: `/api/analyze-excel`, `/api/budget-hierarchy` y
+  el proxy genérico `/api/proxy/<endpoint>` ya no tratan un `ConnectionError`/`Timeout` al hablar
+  con el móvil como "cero transacciones" válidas — devuelven `{"mm_connection_error": true}` con
+  HTTP 503 (504 en timeout), y `analyze_excel()` aborta ANTES de generar ninguna propuesta de
+  conciliación en ese caso (antes seguía adelante con una lista vacía, generando un falso "nuevo
+  movimiento" por cada línea del Excel). El indicador de conexión del header
+  (`updateConnectionStatus()`/`#connectionStatus`) se extendió para reaccionar también a un fallo
+  a mitad de sesión, no solo desde la carga inicial — `fetchAssets`, `fetchTransactions`,
+  `fetchBudgets`, `fetchCategoryMap` y `confirmUploadFiles()` lo comprueban y actualizan el
+  indicador en cualquier dirección (offline al fallar, online al recuperarse).
+- **Propuesta #4 (matching no compartía estado entre ficheros de la misma tanda)**: nueva
+  `backend/reconciliation.build_mm_dataframe()` construye el DataFrame de transacciones de Money
+  Manager UNA SOLA VEZ por tanda de ficheros subidos a la vez, y se pasa compartido a cada
+  llamada de `match_bank_transactions()` en vez de reconstruirse desde cero por fichero.
+  Verificado con un caso sintético (dos transacciones de Money Manager con la misma fecha e
+  importe, sin relación real entre sí, cada una en un fichero bancario distinto de la misma
+  tanda): antes, ambos ficheros proponían determinísticamente la MISMA transacción y la segunda
+  quedaba invisible para siempre; con el DataFrame compartido, cada fichero obtiene la
+  transacción correcta. De paso, se corrigió `is_transfer` en `build_mm_dataframe()`, que
+  comparaba `inOutType == 'Transferencia'` (un texto que nunca aparece en datos reales, ver
+  versión `0.8.3.30`) — ahora se detecta por `inOutCode` ("3"/"4"), y el consumo por lado
+  (`matched_origin`/`matched_destination`) ahora también se aplica sin cuenta asociada, decidido
+  por el signo del importe bancario, para que dos ficheros SIN cuenta asociada que traigan los
+  dos lados de la misma transferencia entre cuentas propias no se bloqueen entre sí. Detalle
+  completo verificado con 4 casos sintéticos en `CLAUDE.md`, secciones "Matching compartido entre
+  ficheros de la misma tanda" y "Matching acotado por cuenta y transferencias entre bancos".
 
 ## 0.8.3.30 - 2026-07-19
 
