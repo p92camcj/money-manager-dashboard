@@ -12,6 +12,10 @@ __pycache__/
 .env
 config.json
 
+# Qué versión de novedades ya vio cada usuario (ver CLAUDE.md, "Aviso de novedades tras
+# auto-actualizar") -- dato de usuario, no de código.
+last_seen_version.txt
+
 # Datos de ejemplo/pruebas locales (pueden contener información financiera real)
 samples/
 

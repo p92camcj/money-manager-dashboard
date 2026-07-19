@@ -3,6 +3,36 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.9.0.33 - 2026-07-19
+
+Nueva funcionalidad visible (Tarea 2 de una sesión de trabajo): aviso de novedades dentro de la
+propia ventana tras auto-actualizar, en lenguaje sencillo (no el `CHANGELOG.md` técnico tal
+cual). Detalle completo en `CLAUDE.md`, sección "Aviso de novedades tras auto-actualizar".
+
+- **`NOVEDADES.md`** (nuevo, empaquetado como recurso de solo lectura, ver `build_exe.spec`):
+  contrapartida legible de `CHANGELOG.md`, misma cabecera `## X.Y.Z.W - YYYY-MM-DD` para poder
+  emparejarlas por versión, con bullets en lenguaje llano por debajo. A partir de esta versión,
+  toda entrada nueva de `CHANGELOG.md` lleva también su entrada en `NOVEDADES.md`.
+- **`GET /api/novedades`** (`app.py::parse_novedades()`) devuelve el histórico completo y las
+  versiones más nuevas que la última que el usuario ya vio (`last_seen_version.txt`, dato de
+  usuario en `base_dir()`, gitignored -- no confundir con `NOVEDADES.md`, que sí va en git). Un
+  usuario nuevo (sin `last_seen_version.txt` previo) no ve ningún aviso -- se marca la versión
+  actual como vista en silencio en su primer arranque.
+- **`POST /api/novedades/mark-seen`** marca la versión actual como vista, llamado en cuanto se
+  decide mostrar el aviso automático (no al cerrarlo) -- el histórico completo sigue disponible
+  bajo demanda con el enlace "Ver novedades" del footer aunque el usuario cierre el aviso sin
+  leerlo entero.
+- Frontend: `checkNovedades()` (automático al arrancar) y `showFullNovedades()` (bajo demanda)
+  en `static/script.js`, mismo modal (`#novedadesModal`) y estilo que el resto del dashboard.
+- Funciona igual para la vía de `git pull` que para el `.exe` -- ambas comparten `app.py` y
+  `base_dir()` ya resuelve a la raíz del repo en modo desarrollo, sin código específico por vía.
+- Verificado con la API real (no solo unitario): simulando un `last_seen_version.txt` con una
+  versión antigua, `GET /api/novedades` devuelve las entradas nuevas correctas; tras
+  `mark-seen`, deja de devolverlas. Corregido en el mismo commit un bug real de parseo
+  descubierto durante esta verificación: `parse_novedades()` truncaba cualquier bullet de
+  `NOVEDADES.md` envuelto en más de una línea (el resto de los `.md` del proyecto se envuelve
+  para legibilidad) -- ahora une las líneas de continuación.
+
 ## 0.8.4.32 - 2026-07-19
 
 Corrección de dos ítems del backlog (Tarea 1 de una sesión de trabajo):

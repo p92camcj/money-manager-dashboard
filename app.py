@@ -53,10 +53,15 @@ app = Flask(__name__, static_folder=os.path.join(resource_dir(), 'static'))
 CORS(app)  # Permite acceso desde el frontend en desarrollo
 
 # Configuración persistente. CONFIG_FILE vive junto al .exe (o en la raíz del repo en
-# desarrollo) porque debe sobrevivir entre arranques -- ver backend/paths.py. VERSION_FILE es un
-# recurso de solo lectura empaquetado junto con el código, por eso usa resource_dir().
+# desarrollo) porque debe sobrevivir entre arranques -- ver backend/paths.py. VERSION_FILE y
+# NOVEDADES_FILE son recursos de solo lectura empaquetados junto con el código, por eso usan
+# resource_dir(). LAST_SEEN_VERSION_FILE en cambio es dato de usuario (qué versión ya vio el
+# aviso de novedades) y debe persistir entre arranques del .exe, por eso usa base_dir() -- ver
+# CLAUDE.md, "Aviso de novedades tras auto-actualizar".
 CONFIG_FILE = os.path.join(base_dir(), "config.json")
 VERSION_FILE = os.path.join(resource_dir(), "VERSION")
+NOVEDADES_FILE = os.path.join(resource_dir(), "NOVEDADES.md")
+LAST_SEEN_VERSION_FILE = os.path.join(base_dir(), "last_seen_version.txt")
 # config.json no está versionado (cada usuario tiene su propia IP de LAN, ver
 # config.example.json) — este valor de ejemplo es el único que vive en el código, y se usa
 # tanto como fallback en memoria como para crear config.json en el primer arranque.
@@ -68,6 +73,65 @@ def get_app_version():
             return f.read().strip()
     except FileNotFoundError:
         return "0.0.0.0"
+
+def _version_tuple(v):
+    """Convierte 'X.Y.Z.W' (o 'vX.Y.Z.W') en una tupla comparable. Cualquier versión que no siga
+    ese formato se trata como la más antigua posible, para no romper la comparación."""
+    try:
+        return tuple(int(p) for p in v.strip().lstrip('v').split('.'))
+    except (ValueError, AttributeError):
+        return (0,)
+
+def parse_novedades():
+    """Parsea NOVEDADES.md (convención documentada en CLAUDE.md) a una lista de entradas
+    {version, date, summary: [linea, ...]}, en el mismo orden en que aparecen en el fichero (más
+    reciente primero, igual que CHANGELOG.md). Si el fichero no existe (p.ej. un .exe antiguo sin
+    empaquetar todavía, o se borró a mano), devuelve una lista vacía -- nunca lanza."""
+    entries = []
+    try:
+        with open(NOVEDADES_FILE, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except (FileNotFoundError, OSError):
+        return entries
+
+    current = None
+    for line in content.splitlines():
+        stripped = line.strip()
+        header_match = re.match(r'^##\s+([\d.]+)\s+-\s+(\d{4}-\d{2}-\d{2})\s*$', stripped)
+        if header_match:
+            if current:
+                entries.append(current)
+            current = {'version': header_match.group(1), 'date': header_match.group(2), 'summary': []}
+            continue
+        if current is None:
+            continue
+        bullet_match = re.match(r'^-\s+(.+)$', stripped)
+        if bullet_match:
+            current['summary'].append(bullet_match.group(1))
+        elif stripped and current['summary']:
+            # Línea de continuación de un bullet envuelto en varias líneas (el resto de los .md
+            # del proyecto se envuelve a ~90-100 caracteres por legibilidad, ver CHANGELOG.md/
+            # BACKLOG.md) -- se une con un espacio a la última línea del resumen en vez de
+            # descartarla silenciosamente (confirmado con un caso real: sin esto, dos bullets de
+            # NOVEDADES.md quedaban truncados a mitad de frase).
+            current['summary'][-1] = f"{current['summary'][-1]} {stripped}"
+    if current:
+        entries.append(current)
+    return entries
+
+def get_last_seen_version():
+    if os.path.exists(LAST_SEEN_VERSION_FILE):
+        try:
+            with open(LAST_SEEN_VERSION_FILE, 'r') as f:
+                text = f.read().strip()
+                return text or None
+        except OSError:
+            pass
+    return None
+
+def save_last_seen_version(version):
+    with open(LAST_SEEN_VERSION_FILE, 'w') as f:
+        f.write(version)
 
 def get_config():
     if os.path.exists(CONFIG_FILE):
@@ -415,6 +479,39 @@ def get_budget_hierarchy():
 @app.route('/api/version', methods=['GET'])
 def get_version():
     return jsonify({"version": get_app_version()})
+
+@app.route('/api/novedades', methods=['GET'])
+def get_novedades():
+    """Novedades legibles para el usuario final tras auto-actualizar (ver CLAUDE.md, "Aviso de
+    novedades tras auto-actualizar"). `entries` es el histórico completo (para el enlace "Ver
+    novedades" bajo demanda); `new_entries` son solo las versiones más nuevas que la última que
+    el usuario ya vio (para el aviso automático al arrancar)."""
+    current_version = get_app_version()
+    last_seen = get_last_seen_version()
+    entries = parse_novedades()
+
+    # Primer arranque real (nunca se ha marcado nada como visto): no hay "novedades" que
+    # mostrar -- un usuario nuevo no ha usado ninguna versión anterior. Se marca la actual como
+    # vista en silencio; el histórico completo sigue disponible bajo demanda.
+    first_run = last_seen is None
+    if first_run:
+        save_last_seen_version(current_version)
+        last_seen = current_version
+
+    new_entries = [e for e in entries if _version_tuple(e['version']) > _version_tuple(last_seen)]
+
+    return jsonify({
+        'current_version': current_version,
+        'last_seen_version': last_seen,
+        'entries': entries,
+        'new_entries': new_entries,
+        'first_run': first_run,
+    })
+
+@app.route('/api/novedades/mark-seen', methods=['POST'])
+def mark_novedades_seen():
+    save_last_seen_version(get_app_version())
+    return jsonify({"status": "success"})
 
 @app.route('/api/config', methods=['GET', 'POST'])
 def handle_config():

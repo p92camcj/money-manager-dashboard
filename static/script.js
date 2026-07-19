@@ -576,6 +576,10 @@ window.onclick = function(event) {
     if (event.target == modal) {
         closeModal();
     }
+    const novedadesModal = document.getElementById('novedadesModal');
+    if (event.target == novedadesModal) {
+        closeNovedadesModal();
+    }
 }
 
 async function editTransaction(tId) {
@@ -1253,9 +1257,64 @@ async function loadAppVersion() {
     } catch { /* footer opcional, no bloquea la app si falla */ }
 }
 
+// --- AVISO DE NOVEDADES TRAS AUTO-ACTUALIZAR (ver CLAUDE.md) ---
+function renderNovedadesEntry(entry) {
+    const items = (entry.summary || []).map(line => `<li>${line}</li>`).join('');
+    return `
+        <div class="novedad-entry">
+            <div class="novedad-version">Versión ${entry.version} <span class="novedad-date">(${entry.date})</span></div>
+            <ul>${items || '<li>Sin detalle.</li>'}</ul>
+        </div>
+    `;
+}
+
+function showNovedadesModal(entries, isFullHistory) {
+    const modal = document.getElementById('novedadesModal');
+    const title = document.getElementById('novedadesTitle');
+    const body = document.getElementById('novedadesBody');
+    if (!modal || !body) return;
+
+    title.textContent = isFullHistory ? 'Histórico de novedades' : '🎉 Se ha actualizado la aplicación';
+    body.innerHTML = entries.length
+        ? entries.map(renderNovedadesEntry).join('')
+        : '<p style="color:var(--text-muted)">Sin novedades registradas todavía.</p>';
+    modal.style.display = 'flex';
+}
+
+function closeNovedadesModal() {
+    const modal = document.getElementById('novedadesModal');
+    if (modal) modal.style.display = 'none';
+}
+
+// Se llama una vez al arrancar. Si hay versiones más nuevas que la última que el usuario vio,
+// muestra el aviso automático y marca la versión actual como vista de inmediato (no al cerrar el
+// aviso) -- si el usuario lo cierra sin leerlo entero, "Ver novedades" en el footer sigue dando
+// acceso al histórico completo en cualquier momento.
+async function checkNovedades() {
+    try {
+        const resp = await fetch('/api/novedades');
+        const data = await resp.json();
+        if (data && Array.isArray(data.new_entries) && data.new_entries.length > 0) {
+            showNovedadesModal(data.new_entries, false);
+            fetch('/api/novedades/mark-seen', { method: 'POST' }).catch(() => {});
+        }
+    } catch { /* no bloquea el arranque si falla */ }
+}
+
+async function showFullNovedades() {
+    try {
+        const resp = await fetch('/api/novedades');
+        const data = await resp.json();
+        showNovedadesModal(data.entries || [], true);
+    } catch (e) {
+        alert('No se pudo cargar el histórico de novedades: ' + e.message);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     loadData();
     loadAppVersion();
+    checkNovedades();
     const saveBtn = document.querySelector('#settingsTab button');
     if (saveBtn) saveBtn.onclick = saveIPConfig;
 });

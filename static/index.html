@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Money Manager Premium - Dashboard</title>
-    <link rel="stylesheet" href="style.css?v=11">
+    <link rel="stylesheet" href="style.css?v=12">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
@@ -145,7 +145,7 @@
         </main>
     </div>
 
-    <footer class="app-footer">Money Manager Dashboard <span id="appVersion">v...</span></footer>
+    <footer class="app-footer">Money Manager Dashboard <span id="appVersion">v...</span> · <a href="#" class="novedades-link" onclick="showFullNovedades(); return false;">Ver novedades</a></footer>
 
     <div id="editModal" class="modal glass">
         <div class="modal-content card glass">
@@ -209,7 +209,19 @@
         </div>
     </div>
 
+    <!-- Aviso de novedades tras auto-actualizar (Tarea 2 de una sesión de trabajo, ver CLAUDE.md
+         "Convención de novedades legibles"). Mismo estilo que el resto de modales del dashboard. -->
+    <div id="novedadesModal" class="modal glass">
+        <div class="modal-content card glass" style="width:520px; max-width:90vw;">
+            <h2 id="novedadesTitle">Novedades</h2>
+            <div id="novedadesBody" style="max-height:55vh; overflow-y:auto; margin-top:10px;"></div>
+            <div class="modal-buttons" style="margin-top:20px;">
+                <button type="button" class="btn-primary" onclick="closeNovedadesModal()">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
     <script src="js/analytics.js?v=8"></script>
-    <script src="script.js?v=17"></script>
+    <script src="script.js?v=18"></script>
 </body>
 </html>

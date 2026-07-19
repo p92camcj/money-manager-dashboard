@@ -8,13 +8,18 @@
 # --onefile (tiene que autoextraerse a una carpeta temporal en cada arranque) es un precio
 # aceptable frente a la simplicidad de un solo fichero que descargar y mover.
 #
-# static/ y VERSION se empaquetan como datos de solo lectura (ver backend/paths.py:resource_dir())
-# -- backend/ NO hace falta listarlo aquí, PyInstaller sigue automáticamente los `import
-# backend.xxx` de app.py y empaqueta ese código dentro del propio EXE.
+# static/, VERSION y NOVEDADES.md se empaquetan como datos de solo lectura (ver
+# backend/paths.py:resource_dir()) -- backend/ NO hace falta listarlo aquí, PyInstaller sigue
+# automáticamente los `import backend.xxx` de app.py y empaqueta ese código dentro del propio EXE.
+# NOVEDADES.md (aviso de novedades tras auto-actualizar, ver CLAUDE.md) se lee en tiempo de
+# ejecución desde app.py -- si falta en el .exe empaquetado, el aviso simplemente no tendría
+# nada que mostrar (parse_novedades() ya tolera que el fichero no exista), pero no tiene sentido
+# publicar el .exe sin él.
 
 datas = [
     ('static', 'static'),
     ('VERSION', '.'),
+    ('NOVEDADES.md', '.'),
 ]
 
 a = Analysis(

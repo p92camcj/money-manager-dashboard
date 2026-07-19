@@ -111,6 +111,9 @@ app.py             Flask app. Sirve static/, y expone:
                               en vez de un 500 genérico indistinguible de cualquier otro error.
   /api/config              -> GET/POST de config.json (IP/puerto del móvil)
   /api/version             -> versión actual de la app (ver "Versionado")
+  /api/novedades           -> GET: novedades legibles para el usuario final (ver "Aviso de
+                              novedades tras auto-actualizar" más abajo).
+  /api/novedades/mark-seen -> POST: marca la versión actual como ya vista.
 
 reference/         Código JS del propio Money Manager PC Manager (descargado con
                     reference/download_mm.py desde el servidor del móvil). Es material de
@@ -715,6 +718,47 @@ sí NUNCA dispara la build; solo el tag lo hace. Por tanto, para cualquier cambi
 
 Esto se da por incluido en cualquier cierre de tarea con bump de versión, salvo que el usuario
 diga explícitamente lo contrario (p. ej. "commitea esto pero no lo publiques todavía").
+
+## Aviso de novedades tras auto-actualizar (`NOVEDADES.md`)
+
+Introducido 2026-07-19. Cuando la app se auto-actualiza (vía `.exe`) o el usuario hace `git pull`
+(vía técnica), la próxima vez que la abre ve un aviso dentro de la propia ventana resumiendo qué
+ha cambiado desde la última versión que vio — pensado tanto para el autor como para amigos sin
+conocimientos técnicos, así que **nunca** es el texto técnico de `CHANGELOG.md` tal cual.
+
+- **`CHANGELOG.md` es la versión técnica** (para quien toca código): qué archivo cambió, por qué,
+  qué se verificó. **`NOVEDADES.md` es la versión legible** (para cualquier usuario): una o dos
+  frases en lenguaje llano por versión, sin nombres de función ni jerga ("Ahora la app avisa si
+  pierde la conexión con el móvil", no "fix: mm_connection_error en analyze_excel()"). Mismo
+  formato de cabecera que `CHANGELOG.md` (`## X.Y.Z.W - YYYY-MM-DD`) para que
+  `app.py::parse_novedades()` los empareje por versión, con una lista de bullets `- ...` debajo
+  como resumen.
+  - **A partir de esta convención (2026-07-19), toda entrada nueva de `CHANGELOG.md` lleva
+    también su entrada correspondiente en `NOVEDADES.md`, en el mismo commit.** El historial
+    anterior a esta fecha no tiene contrapartida en `NOVEDADES.md` — no se ha reescrito
+    retroactivamente, es una convención hacia adelante, no una migración del histórico.
+- **`NOVEDADES.md` se empaqueta como recurso de solo lectura** (`resource_dir()`, igual que
+  `VERSION` — ver `build_exe.spec`), no como dato de usuario: viaja con el código, no con la
+  instalación de cada usuario.
+- **Qué versión ha visto el usuario ya SÍ es dato de usuario, y NO va en git**: se guarda en
+  `last_seen_version.txt` en `base_dir()` (junto a `config.json`/`logs/`/`data/`, mismo patrón de
+  `backend/paths.py` que el resto de datos que deben persistir entre arranques del `.exe`).
+- **`GET /api/novedades`** devuelve `{"current_version", "last_seen_version", "entries"
+  (histórico completo, orden más reciente primero), "new_entries" (solo las versiones más nuevas
+  que `last_seen_version`), "first_run"}`. En el primerísimo arranque (nunca se ha guardado
+  `last_seen_version.txt`), se marca la versión actual como vista EN ESE MOMENTO sin mostrar
+  nada — un usuario nuevo no ha usado ninguna versión anterior, así que no hay "novedades" reales
+  que mostrarle; el histórico completo sigue disponible bajo demanda (ver más abajo).
+- **`POST /api/novedades/mark-seen`** escribe la versión actual en `last_seen_version.txt`. El
+  frontend lo llama nada más decidir mostrar el aviso automático (`checkNovedades()` en
+  `static/script.js`), no al cerrarlo — así, si el usuario cierra el aviso sin haberlo leído
+  entero, no se le repite en el siguiente arranque, pero **puede volver a consultar el histórico
+  completo** con el enlace "Ver novedades" del footer (`showFullNovedades()`), que siempre pide
+  `entries` completo sin filtrar por `last_seen_version`.
+- **Funciona igual para la vía de `git pull`** que para el `.exe`: ambas sirven la misma
+  `static/index.html`/`script.js` desde el mismo `app.py`, y `base_dir()` ya resuelve a la raíz
+  del repo en modo desarrollo — no hizo falta ninguna rama de código específica por vía de
+  distribución.
 
 ## Seguimiento de bugs y propuestas: `BACKLOG.md`
 
