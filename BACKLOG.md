@@ -47,20 +47,6 @@ las opciones más económicas de firma con reputación acumulada tipo SignPath p
 código abierto) eliminaría o reduciría mucho ambos problemas. No se ha hecho en esta tarea por ser
 un coste/proceso externo al código -- queda anotado para valorar si el proyecto gana tracción.
 
-### Propuesta #10: "Ver Registro Asociado" como ventana modal con edición, en vez de navegar fuera de Conciliación
-
-- **Estado:** pendiente.
-- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
-
-Actualmente el botón "Ver Registro Asociado" lleva a la pestaña de Transacciones con un filtro
-aplicado, perdiendo el contexto de dónde estaba el usuario en su revisión de conciliación
-(posición de scroll, filtro de etiqueta activo en `#proposalsFilterBar`). Debe abrir una ventana
-modal superpuesta con la información del registro en su lugar, idealmente con opción de editarlo
-directamente ahí (reutilizando el modal de edición de transacciones ya existente si encaja sin
-fricción), y al cerrarla, el usuario debe quedar exactamente donde estaba en su revisión de
-conciliación — misma posición de scroll, mismo filtro de etiqueta activo — para poder continuar
-sin perder el sitio.
-
 ### Propuesta #11 (gran alcance — no resolver en el mismo commit que las #8-#10): conciliación completa tipo "full outer join" — arqueo de caja
 
 - **Estado:** pendiente, alcance grande.
@@ -97,6 +83,38 @@ resolverlo en el mismo commit que las Propuestas #8, #9 o #10.
 ---
 
 ## Resueltos
+
+### Propuesta #10: "Ver Registro Asociado" como ventana modal con edición, en vez de navegar fuera de Conciliación
+
+- **Resuelto:** 2026-07-19, versión `0.10.0.38`.
+- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
+
+El botón "Ver Registro Asociado" ya no navega a la pestaña Transacciones (lo que perdía la
+posición de scroll y el filtro de etiqueta activo en `#proposalsFilterBar` de la revisión de
+conciliación) — abre el registro de Money Manager correspondiente en el mismo modal de edición ya
+existente (`#editModal`), permitiendo editarlo directamente ahí. Se decidió reutilizar el modal de
+edición en vez de crear uno de solo lectura porque encajó sin fricción: solo hizo falta extraer el
+relleno de campos de `editTransaction()` a `populateEditFormFromTransaction(t)`, reutilizable
+desde el nuevo flujo. Detalle completo (incluida la búsqueda del registro cuando no está en el
+periodo del Dashboard actualmente cargado, y por qué el scroll/filtro se conservan sin código
+explícito de guardar/restaurar posición) en `CLAUDE.md`, sección `"Ver Registro Asociado" como
+modal, sin navegar fuera de Conciliación`.
+
+**Verificado en navegador real con Playwright** (no solo "debería funcionar"): subida de una tanda
+de 2 ficheros reales de `samples/` contra el móvil real, selección de un filtro de etiqueta
+distinto de "Todos", scroll de `.content` a un punto concreto — al abrir y cerrar el modal, filtro
+y scroll quedan exactamente igual y `#conciliationTab` sigue activo en todo momento. También
+verificado el camino de fallback (registro fuera del periodo cargado en `transactionsData`,
+vaciada a propósito para forzarlo) y el de guardado (interceptando la escritura real a
+`/api/proxy/moneyBook/update` con Playwright para no tocar ningún dato real del móvil): tras un
+guardado simulado con éxito, el aviso dice correctamente "Transacción modificada.", el modal se
+cierra, y la pestaña activa sigue siendo Conciliación.
+
+**Hallazgo colateral corregido en el mismo commit**: `submitTransaction()`/`submitTransfer()`
+leían `currentEditingId` DESPUÉS de `closeModal()` (que ya lo pone a `null`) para decidir el texto
+del `alert` ("modificada" vs. "añadida") y el `targetId` al que saltar tras guardar — con esa
+lectura tardía, el `alert` mostraba "añadida exitosamente" incluso al EDITAR un registro ya
+existente, un bug puramente cosmético pero presente desde que existe ese código.
 
 ### Bug #9: confirmar una selección entre varias propuestas de match no persiste igual que un match automático
 

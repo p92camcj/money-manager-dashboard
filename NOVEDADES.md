@@ -4,6 +4,12 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.10.0.38 - 2026-07-19
+
+- En Conciliación, el botón "Ver Registro Asociado" ya no te saca de la pantalla donde estabas
+  revisando: ahora abre el movimiento en una ventanita, donde además puedes editarlo si hace
+  falta. Al cerrarla, sigues justo donde te habías quedado (mismo scroll, mismo filtro).
+
 ## 0.9.2.36 - 2026-07-19
 
 - Al confirmar manualmente cuál de varias propuestas de conciliación es la correcta, ahora se

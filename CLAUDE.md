@@ -567,6 +567,58 @@ cuentas/tarjetas que él mismo marcó.
   resolución de ambos lados sin colisión ya están confirmados contra datos reales de extremo a
   extremo, no solo con un script sintético.
 
+### "Ver Registro Asociado" como modal, sin navegar fuera de Conciliación
+
+**Resuelto 2026-07-19 (Propuesta #10 de `BACKLOG.md`).** El botón "Ver Registro Asociado" de una
+propuesta `exact_match`/`reconciled` (`renderProposalsList()` en `static/script.js`) ya no navega
+a la pestaña Transacciones (lo que hacía la antigua `showTransaction()`, perdiendo la posición de
+scroll y el filtro de etiqueta activo en `#proposalsFilterBar`) — abre el registro de Money
+Manager correspondiente en el **mismo modal de edición ya existente** (`#editModal`, el que usan
+`openAddModal()`/`editTransaction()`), permitiendo editarlo directamente ahí. Se decidió reutilizar
+el modal de edición (no uno de solo lectura nuevo) porque encajaba sin fricción: solo hizo falta
+extraer el relleno de campos de `editTransaction()` a una función aparte,
+`populateEditFormFromTransaction(t)`, reutilizable desde el nuevo flujo.
+
+- **`viewAssociatedRecord(mmId, proposalDate)`** (sustituye a `showTransaction()` en este flujo,
+  que se mantiene solo para el flujo de "Pre-rellenar y Añadir", ver más abajo): busca primero en
+  `transactionsData` (rápido, sin red); si no está —habitual, porque `transactionsData` solo
+  cubre `currentPeriod`, el periodo seleccionado en el Dashboard, que no tiene por qué coincidir
+  con el rango del extracto bancario conciliado—, hace una consulta puntual a
+  `/api/proxy/moneyBook/getDataByPeriod` en una ventana de ±31 días alrededor de la fecha de la
+  propuesta (`fetchTransactionById()`) **sin** mutar `transactionsData`/su caché, para no
+  interferir con lo que ya se muestra en Dashboard/Transacciones. Si no se encuentra ni así,
+  mismo aviso de siempre (`alert`) sin abrir el modal.
+- **Por qué el scroll y el filtro se conservan solos, sin código explícito de guardar/restaurar
+  posición**: `.modal` es `position: fixed` sobre toda la ventana (ver `style.css`) — es un
+  overlay, no desplaza el contenido de detrás. Como el nuevo flujo nunca llama a `switchTab()` ni
+  a `renderProposalsList()` mientras el modal está abierto, la posición de scroll de `.content` y
+  el valor del selector de `#proposalsFilterBar` quedan intactos por construcción. Verificado con
+  Playwright en navegador real: se sube una tanda de 2 ficheros reales de `samples/`, se
+  selecciona un filtro de etiqueta distinto de "Todos", se lleva el scroll de `.content` a un
+  punto concreto, se abre y cierra el modal — el filtro y el scroll (medido justo antes de abrir
+  y justo después de cerrar, para no confundirlo con el auto-scroll de Playwright al localizar el
+  botón) quedan exactamente igual, y `#conciliationTab` sigue con la clase `active` en todo
+  momento.
+- **`modalOpenedFromConciliation`** (booleano global): se pone a `true` solo en
+  `viewAssociatedRecord()`, y a `false` en `openAddModal()`/`editTransaction()`/`closeModal()`.
+  `submitTransaction()` lo comprueba tras un guardado con éxito: si viene de Conciliación, cierra
+  el modal y refresca `transactionsData` en silencio pero **no** navega a Transacciones (evita
+  que guardar desde aquí saque al usuario de su revisión); si no, mantiene el comportamiento de
+  siempre (`showTransaction(targetId)` tras editar/crear desde la pestaña Transacciones o desde
+  "Pre-rellenar y Añadir" en Conciliación). Verificado en navegador real con Playwright
+  interceptando la escritura a `/api/proxy/moneyBook/update` (nunca se llega a tocar un registro
+  real): tras un guardado simulado con éxito, el aviso dice "Transacción modificada.", el modal se
+  cierra, y `#conciliationTab` sigue activo.
+- **Hallazgo colateral corregido en el mismo commit, en el mismo bloque de código que ya se
+  estaba tocando**: tanto `submitTransaction()` como `submitTransfer()` leían `currentEditingId`
+  **después** de llamar a `closeModal()` (que ya lo pone a `null`) para decidir el `targetId` al
+  que saltar y el texto del `alert` ("modificada" vs. "añadida"). Con esa lectura tardía,
+  `currentEditingId` siempre era `null` en ese punto — el `alert` mostraba "añadida exitosamente"
+  incluso al EDITAR una transacción o transferencia ya existente, y `showTransaction(targetId)`
+  tras una edición prácticamente nunca se llegaba a ejecutar con el id correcto (caía al
+  `Math.max(...)` de recuperación, pensado solo para altas nuevas). Corregido capturando
+  `currentEditingId` en una constante local (`wasEditingId`) antes de `closeModal()`.
+
 ## Aviso de conexión perdida con el móvil
 
 **Resuelto 2026-07-19 (Bug #1 de `BACKLOG.md`).** Antes, un fallo de conexión con el móvil a

@@ -3,6 +3,36 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.10.0.38 - 2026-07-19
+
+Propuesta #10 del `BACKLOG.md`: "Ver Registro Asociado" en Conciliación ya no navega a la pestaña
+Transacciones (lo que perdía la posición de scroll y el filtro de etiqueta activo en
+`#proposalsFilterBar`) -- abre el registro de Money Manager correspondiente en el mismo modal de
+edición ya existente, permitiendo editarlo directamente ahí.
+
+- `viewAssociatedRecord(mmId, proposalDate)` sustituye a `showTransaction()` en este flujo: busca
+  primero en `transactionsData` (caché del periodo actual del Dashboard) y, si no está --habitual,
+  porque el rango del extracto bancario conciliado no tiene por qué coincidir con ese periodo--,
+  hace una consulta puntual a `getDataByPeriod` en una ventana de ±31 días alrededor de la fecha de
+  la propuesta, sin tocar la caché de Dashboard/Transacciones.
+- El scroll y el filtro se conservan sin código explícito de guardar/restaurar posición: el modal
+  es un overlay `position: fixed` y el nuevo flujo nunca navega de pestaña ni vuelve a renderizar
+  la lista de propuestas mientras está abierto.
+- `modalOpenedFromConciliation` evita que guardar cambios desde este modal navegue a Transacciones
+  tras el guardado (comportamiento que sí se mantiene para ediciones iniciadas desde la propia
+  pestaña Transacciones o desde "Pre-rellenar y Añadir").
+
+Verificado en navegador real con Playwright: filtro de etiqueta y scroll de `.content` intactos
+tras abrir y cerrar el modal sobre una tanda real de 2 ficheros de `samples/`; camino de fallback
+(registro fuera del periodo cargado) verificado vaciando `transactionsData` a propósito; camino de
+guardado verificado interceptando la escritura real a `/api/proxy/moneyBook/update` (sin tocar
+ningún dato real del móvil), confirmando el mensaje correcto y que la pestaña activa no cambia.
+
+**Hallazgo colateral corregido en el mismo commit**: `submitTransaction()`/`submitTransfer()`
+leían `currentEditingId` después de `closeModal()` (que ya lo pone a `null`), así que el aviso de
+guardado mostraba siempre "añadida exitosamente" incluso al editar un registro ya existente.
+Corregido capturando el id en una constante local antes de cerrar el modal.
+
 ## 0.9.2.36 - 2026-07-19
 
 Bug #9 del `BACKLOG.md`: confirmar una selección entre varias propuestas de conciliación no se

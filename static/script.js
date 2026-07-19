@@ -335,6 +335,10 @@ function expandAllBudgets() { document.querySelectorAll('.tree-node').forEach(n 
 // --- ORDENACIÓN Y TABLAS ---
 let sortState = { column: -1, ascending: true };
 let currentEditingId = null;
+// Propuesta #10 (BACKLOG.md): true mientras el modal de edición está abierto desde "Ver Registro
+// Asociado" en Conciliación -- evita que submitTransaction()/submitTransfer() naveguen a la
+// pestaña Transacciones al guardar, para que el usuario no pierda el sitio en su revisión.
+let modalOpenedFromConciliation = false;
 
 function getAssetName(assetId, fallbackName) {
     if (fallbackName && fallbackName !== 'Desconocida' && fallbackName !== '') return fallbackName;
@@ -533,8 +537,9 @@ function populateModalAccounts() {
     if (currTgt) selTargetAcc.value = currTgt;
 }
 
-function openAddModal() { 
+function openAddModal() {
     currentEditingId = null;
+    modalOpenedFromConciliation = false;
     const modalTitle = document.querySelector('#editModal h2');
     if (modalTitle) modalTitle.innerText = "Nueva Transacción";
     
@@ -566,9 +571,10 @@ function openEditModal(tId) {
     updateModalCategories();
 }
 
-function closeModal() { 
+function closeModal() {
     currentEditingId = null;
-    document.getElementById('editModal').style.display = 'none'; 
+    modalOpenedFromConciliation = false;
+    document.getElementById('editModal').style.display = 'none';
 }
 
 window.onclick = function(event) {
@@ -585,7 +591,16 @@ window.onclick = function(event) {
 async function editTransaction(tId) {
     let t = transactionsData.find(x => String(x.id) === String(tId));
     if (!t) return;
+    modalOpenedFromConciliation = false;
+    openEditModal(tId);
+    populateEditFormFromTransaction(t);
+}
 
+// Rellena los campos del modal de edición ya abierto (openEditModal()/openAddModal() ya lo
+// hicieron visible) a partir de un objeto de transacción de Money Manager -- extraído de
+// editTransaction() para poder reutilizarlo también desde viewAssociatedRecord() (Propuesta #10,
+// BACKLOG.md), que puede necesitar un registro que no esté en transactionsData.
+function populateEditFormFromTransaction(t) {
     // inOutCode es la señal fiable de que es una transferencia, no el texto de inOutType (ver
     // renderTransactions() y CLAUDE.md -- el texto real de lectura es "Dinero gastado", nunca
     // "Transferencia"/"Transfer"). Con el mapeo antiguo, editar una transferencia real abría el
@@ -600,8 +615,6 @@ async function editTransaction(tId) {
             timePart = parts[1].substring(0,5);
         }
     }
-
-    openEditModal(tId);
 
     document.getElementById('editType').value = isTrans ? 'Transferencia' : (t.inOutType === 'Ingreso' ? 'Ingreso' : 'Gasto');
 
@@ -820,12 +833,25 @@ async function submitTransaction() {
         
         const text = await resp.text();
         if (text === 'true' || text.includes('success:true') || text.includes('success') || resp.ok) {
+            // Capturar ANTES de closeModal(), que pone currentEditingId/modalOpenedFromConciliation
+            // a su valor por defecto -- leerlos después (como hacía antes este bloque) hacía que
+            // targetId y el mensaje de "modificada" nunca acertaran tras una edición.
+            const wasEditingId = currentEditingId;
+            const cameFromConciliation = modalOpenedFromConciliation;
             closeModal();
             // Refrescar en silencio los datos de sqlite
-            await fetchTransactions(); 
-            
+            await fetchTransactions();
+
+            if (cameFromConciliation) {
+                // Abierto desde "Ver Registro Asociado" en Conciliación (Propuesta #10,
+                // BACKLOG.md) -- no navegar de pestaña, el usuario debe quedar exactamente donde
+                // estaba en su revisión de propuestas.
+                alert(wasEditingId ? "Transacción modificada." : "Transacción añadida exitosamente.");
+                return;
+            }
+
             // Si es edición usamos el ID, si es nueva buscamos el max ID
-            let targetId = currentEditingId;
+            let targetId = wasEditingId;
             if (!targetId && transactionsData.length > 0) {
                 targetId = Math.max(...transactionsData.map(t => parseInt(t.id || 0)));
             }
@@ -835,7 +861,7 @@ async function submitTransaction() {
             } else {
                 renderTransactions();
             }
-            alert(currentEditingId ? "Transacción modificada." : "Transacción añadida exitosamente.");
+            alert(wasEditingId ? "Transacción modificada." : "Transacción añadida exitosamente.");
         } else {
             alert("Error al guardar: " + resp.status + " | " + text);
         }
@@ -895,10 +921,12 @@ async function submitTransfer() {
 
         const text = await resp.text();
         if (text === 'true' || text.includes('success:true') || text.includes('success') || resp.ok) {
+            // Capturar antes de closeModal() -- ver mismo comentario en submitTransaction().
+            const wasEditingId = currentEditingId;
             closeModal();
             await fetchTransactions();
             renderTransactions();
-            alert(currentEditingId ? "Transferencia modificada." : "Transferencia añadida exitosamente.");
+            alert(wasEditingId ? "Transferencia modificada." : "Transferencia añadida exitosamente.");
         } else {
             alert("Error al guardar la transferencia: " + resp.status + " | " + text);
         }
@@ -1126,7 +1154,7 @@ function renderProposalsList() {
 
         let candidatesHtml = '';
         if (p.status === 'exact_match' || p.status === 'reconciled') {
-            candidatesHtml = `<div style="margin-top:10px;"><button class="btn-secondary btn-sm" onclick="showTransaction('${p.suggested_mm_ref}')">👁 Ver Registro Asociado</button></div>`;
+            candidatesHtml = `<div style="margin-top:10px;"><button class="btn-secondary btn-sm" onclick="viewAssociatedRecord('${p.suggested_mm_ref}', '${p.date}')">👁 Ver Registro Asociado</button></div>`;
         } else if (p.status === 'suggested_match' || p.status === 'probable_match') {
             candidatesHtml = `<div style="margin-top:10px;"><strong>Posibles Asociados en MoneyManager:</strong><ul style="list-style:none; padding-left:0; margin-top:5px;">`;
             (p.candidates || []).forEach(cand => {
@@ -1208,6 +1236,50 @@ function showTransaction(id) {
     } else {
         alert("Transacción original no encontrada en el set actual de datos de 1 mes.");
     }
+}
+
+// Busca puntualmente un registro de Money Manager por id en una ventana de fechas alrededor de
+// `aroundDate`, sin tocar transactionsData/caché -- para no interferir con lo que ya se muestra
+// en Dashboard/Transacciones (que sólo cubren currentPeriod, ver loadData()/fetchTransactions()).
+// Usado por viewAssociatedRecord() cuando el registro conciliado cae fuera de ese periodo, algo
+// habitual porque el rango del extracto bancario conciliado no tiene por qué coincidir con el
+// periodo actualmente seleccionado en el Dashboard.
+async function fetchTransactionById(mmId, aroundDate) {
+    try {
+        const base = aroundDate ? new Date(aroundDate) : new Date();
+        if (isNaN(base.getTime())) return null;
+        const pad = (d, days) => {
+            const r = new Date(d);
+            r.setDate(r.getDate() + days);
+            return r.toISOString().split('T')[0];
+        };
+        const resp = await fetch(`/api/proxy/moneyBook/getDataByPeriod?startDate=${pad(base, -31)}&endDate=${pad(base, 31)}`);
+        const data = await resp.json();
+        if (isMmConnectionError(data) || !Array.isArray(data)) return null;
+        return data.find(t => String(t.id) === String(mmId)) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Propuesta #10 (BACKLOG.md): "Ver Registro Asociado" abre el registro de Money Manager
+// correspondiente en el mismo modal de edición ya existente, en vez de navegar a la pestaña
+// Transacciones -- así el usuario no pierde su posición de scroll ni el filtro de etiqueta activo
+// en Conciliación (el modal es un overlay `position: fixed`, no desplaza la página de debajo; ver
+// style.css). modalOpenedFromConciliation evita además que guardar cambios aquí navegue de
+// pestaña (ver submitTransaction()/submitTransfer()).
+async function viewAssociatedRecord(mmId, proposalDate) {
+    let t = transactionsData.find(x => String(x.id) === String(mmId));
+    if (!t) {
+        t = await fetchTransactionById(mmId, proposalDate);
+    }
+    if (!t) {
+        alert("No se encontró el registro asociado en Money Manager.");
+        return;
+    }
+    modalOpenedFromConciliation = true;
+    openEditModal(t.id);
+    populateEditFormFromTransaction(t);
 }
 
 async function confirmMatch(sourceId, candId) {
