@@ -2,6 +2,16 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.8.1.26 - 2026-07-19
+
+Corrección interna, sin funcionalidad nueva visible: el Release `v0.8.0.25` ya publicado en
+GitHub se compiló con una versión del auto-actualizador (`updater.py`) anterior al endurecimiento
+descrito más abajo en la entrada `0.8.0.25` (el propio ciclo de pruebas reales que motivó ese
+endurecimiento ocurrió después de publicar ese Release). Esta versión republica el `.exe` con el
+`updater.py` ya corregido -- necesario para que la propia auto-actualización, a partir de ahora,
+use el mecanismo fiable en vez del original. Ver detalle completo del cambio en la entrada
+`0.8.0.25` y en `BACKLOG.md`, Propuesta #6.
+
 ## 0.8.0.25 - 2026-07-19
 
 Nueva funcionalidad visible (Propuesta #6, resuelta en `BACKLOG.md`): segunda vía de
