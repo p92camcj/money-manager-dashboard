@@ -492,13 +492,44 @@ romper la otra.
   (`GET /repos/p92camcj/money-manager-dashboard/releases/latest`), no vía git (no hay repo local
   en la máquina de un amigo). Solo se activa si `sys.frozen` (nunca en modo desarrollo). Compara
   el tag del último Release (`vX.Y.Z.W`) con el `VERSION` empaquetado; si hay uno más nuevo,
-  descarga el asset `MoneyManagerDashboard.exe` a `<exe>.new` y se auto-reemplaza. **Patrón de
-  auto-reemplazo en Windows**: un proceso no puede sobreescribir su propio `.exe` en ejecución, así
-  que se genera un script `.bat` auxiliar (sin dependencias de terceros ni un segundo ejecutable
-  compilado) que espera -- sondeando `tasklist` por PID -- a que el proceso actual termine, mueve
-  el `.exe` nuevo sobre el viejo, lo relanza, y se autoborra. Cualquier fallo (sin internet, GitHub
-  no responde, el Release no tiene el asset esperado...) se registra y la función retorna sin más
-  -- nunca bloquea el arranque ni lanza una excepción hacia arriba.
+  descarga el asset `MoneyManagerDashboard.exe` a `<exe>.new` y se auto-reemplaza. Cualquier fallo
+  (sin internet, GitHub no responde, el Release no tiene el asset esperado...) se registra y la
+  función retorna sin más -- nunca bloquea el arranque ni lanza una excepción hacia arriba.
+
+  **Patrón de auto-reemplazo en Windows -- script auxiliar de PowerShell, no `.bat`/`cmd.exe`**:
+  un proceso no puede sobreescribir su propio `.exe` en ejecución, así que se genera un script
+  auxiliar que espera a que el proceso actual termine, mueve el `.exe` nuevo sobre el viejo, lo
+  relanza, y se autoborra. Es PowerShell -- no la primera opción probada -- porque varias rondas
+  de pruebas reales con `.bat`/`cmd.exe` fallaron de formas no evidentes por escrito: `timeout`
+  dentro de un `cmd.exe` sin consola real falla y retorna al instante en vez de esperar de
+  verdad (rompe el ritmo de los reintentos), y el `start` de cmd.exe para relanzar el `.exe` final
+  se quedaba colgado sin arrancar Flask bajo ciertas combinaciones de banderas de creación de
+  proceso. Los cmdlets de PowerShell (`Start-Sleep`, `Move-Item`, `Start-Process`) no tienen esas
+  dependencias. Detalles verificados con pruebas reales, ver `_spawn_replace_and_exit()`:
+  - Se espera a que desaparezcan TANTO `os.getpid()` como `os.getppid()`: en un `.exe --onefile`
+    de PyInstaller, el PID interno (el que ve Python) no es necesariamente el mismo proceso que
+    retiene más tiempo el bloqueo del propio fichero -- el bootloader "externo" (padre del
+    anterior) también cuenta.
+  - El reemplazo es en dos pasos -- renombrar el viejo a un lado (`Move-Item` a `<exe>.old`) y
+    luego mover el nuevo al nombre ya vacío -- nunca una sustitución directa del nuevo sobre el
+    viejo: Windows permite renombrar un `.exe` en ejecución (se abre con `FILE_SHARE_DELETE`)
+    pero no sobreescribir su contenido en el mismo nombre mientras siga mapeado como imagen.
+  - El proceso PowerShell se lanza con `CREATE_NEW_CONSOLE` (una consola real, que el propio
+    script oculta a sí mismo nada más arrancar con una llamada a `ShowWindow`/`GetConsoleWindow`
+    vía P/Invoke) -- ni `DETACHED_PROCESS` ni `CREATE_NO_WINDOW` funcionaron de forma fiable en
+    pruebas reales para esta combinación concreta (proceso padre = `.exe` congelado de
+    PyInstaller, con `console=False`).
+  - **Limitación conocida y aceptada, no un bug**: incluso con lo anterior correcto, el primer
+    arranque del `.exe` recién sustituido puede tardar bastante más de lo esperado (se ha
+    observado hasta varios minutos en pruebas reales) antes de responder por primera vez --
+    verificado que NO es un cuelgue del propio mecanismo (el mismo `Start-Process` sobre un `.exe`
+    que ya llevara un rato en disco, sin acabar de escribirse, arranca en segundos) sino, con toda
+    probabilidad, el análisis en tiempo real de Windows Defender sobre un ejecutable recién
+    escrito en disco, sin firma digital y nunca visto antes en esa ruta -- el mismo motivo por el
+    que SmartScreen avisa en la descarga manual (ver `README_AMIGOS.md`). No hay forma de evitarlo
+    desde el código sin firmar digitalmente el `.exe` (fuera de alcance de esta tarea, coste de un
+    certificado de terceros -- ver propuesta pendiente en `BACKLOG.md`). Por eso los reintentos de
+    `Move-Item` usan un presupuesto generoso (hasta 5 minutos) en vez de uno corto.
 - **Disparador de GitHub Actions**: push de un tag `v*` (p.ej. `v0.8.0.30`) -- el disparador más
   simple de mantener (no depende de proteger ninguna rama ni de aprobar manualmente un workflow),
   y encaja de forma natural con el propio formato de versión `X.Y.Z.W` ya usado en `VERSION`. El

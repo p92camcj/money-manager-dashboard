@@ -60,6 +60,31 @@ espera realmente el servidor PC Manager. Pendiente de instrumentar (log del payl
 
 ## Propuestas de mejora pendientes
 
+### Propuesta #7: firmar digitalmente el .exe de la distribución "amigable"
+
+- **Estado:** pendiente, no urgente.
+- **Detectado:** 2026-07-19, durante la implementación de la Propuesta #6 (auto-actualización vía
+  GitHub Releases).
+
+El `.exe` generado por `build_exe.spec` no está firmado digitalmente (requeriría un certificado de
+terceros, con coste). Dos consecuencias observadas y ya documentadas como limitaciones aceptadas,
+no bugs:
+
+1. Windows SmartScreen avisa al abrir el `.exe` descargado manualmente por primera vez (ver
+   `README_AMIGOS.md`, ya con instrucciones claras de cómo continuar).
+2. El auto-actualizador (`updater.py`) puede tardar bastante más de lo esperado -- se ha observado
+   hasta varios minutos en pruebas reales -- en el primer arranque del `.exe` recién sustituido,
+   con toda probabilidad por el análisis en tiempo real de Windows Defender sobre un ejecutable
+   nunca visto antes en esa ruta exacta del disco. Ver detalle completo en `CLAUDE.md`, sección
+   "Distribución con ejecutable de Windows". El mecanismo de reemplazo en sí (renombrar + mover +
+   relanzar) se verificó correcto y fiable de forma aislada; el retraso ocurre después, fuera del
+   control del propio código, durante el primer arranque del proceso ya relanzado.
+
+Firmar el `.exe` (certificado de firma de código, p.ej. vía una entidad como DigiCert/Sectigo, o
+las opciones más económicas de firma con reputación acumulada tipo SignPath para proyectos de
+código abierto) eliminaría o reduciría mucho ambos problemas. No se ha hecho en esta tarea por ser
+un coste/proceso externo al código -- queda anotado para valorar si el proyecto gana tracción.
+
 ### Propuesta #4: matching no comparte estado entre ficheros de la misma tanda
 
 - **Estado:** resuelto PARCIALMENTE — solo cuando el usuario asocia una cuenta de Money Manager a
@@ -90,10 +115,12 @@ limitación original persiste tal cual estaba documentada.
 
 ### Propuesta #6: distribución "amigable" con ejecutable Windows (segunda vía, no sustituye a la técnica)
 
-- **Resuelto:** 2026-07-19, versión `0.8.0.25`. Commits: `bcec673` (marcado en progreso), `3186b63`
-  (Bloque 1: empaquetado PyInstaller), `936e35b` (Bloque 2: ventana nativa pywebview), `82f443c`
-  (Bloque 3: auto-actualización vía GitHub Releases), `0310d2a` (Bloque 4: GitHub Actions),
-  `51ad95e` (Bloque 5: `README_AMIGOS.md`).
+- **Resuelto con una limitación conocida sin cerrar (ver Bloque 3 más abajo):** 2026-07-19,
+  versión `0.8.0.25`. Commits: `bcec673` (marcado en progreso), `3186b63` (Bloque 1: empaquetado
+  PyInstaller), `936e35b` (Bloque 2: ventana nativa pywebview), `82f443c` (Bloque 3: auto-
+  actualización vía GitHub Releases, versión inicial), un commit posterior de endurecimiento del
+  auto-actualizador tras pruebas reales extensas (mecanismo de reemplazo corregido varias veces;
+  ver detalle), `0310d2a` (Bloque 4: GitHub Actions), `51ad95e` (Bloque 5: `README_AMIGOS.md`).
 - **Anotado:** 2026-07-19.
 
 Segunda vía de distribución para usuarios sin conocimientos técnicos: un único `.exe` de Windows,
@@ -127,15 +154,33 @@ produce las mismas propuestas que en modo navegador.
 **Bloque 3 — auto-actualización vía GitHub Releases** (`updater.py`): al arrancar el `.exe`
 (nunca en modo desarrollo), comprueba `GET /repos/.../releases/latest` y compara el tag con el
 `VERSION` empaquetado. Si hay una versión más nueva, descarga el asset `MoneyManagerDashboard.exe`
-a `<exe>.new` y se auto-reemplaza: un `.exe` no puede sobreescribirse a sí mismo en ejecución, así
-que genera un script `.bat` auxiliar que espera (sondeando `tasklist` por PID) a que el proceso
-actual termine, mueve el `.exe` nuevo sobre el viejo, lo relanza, y se autoborra. Cualquier fallo
-se registra y nunca bloquea el arranque. Verificado en dos escenarios: sin conexión (mockeado y
-también contra la API real de GitHub, que en ese momento aún no tenía ningún Release -> 404, mismo
-resultado) y actualización disponible (mockeada la respuesta de la API con un tag más nuevo y
-un asset descargable, verificando el contenido descargado y el `.bat` generado con
-`subprocess.Popen`/`sys.exit` interceptados para no lanzar procesos reales incontrolados en el
-escritorio).
+a `<exe>.new` y se auto-reemplaza. El mecanismo de reemplazo pasó por varias rondas de pruebas
+reales end-to-end (compilando y ejecutando el `.exe` de verdad, con una versión antigua simulada
+apuntando al Release real ya publicado en el Bloque 4) que fueron encontrando y corrigiendo fallos
+reales sucesivos -- no se dio nada por bueno solo porque "debería funcionar": el script auxiliar
+pasó de `.bat`/`cmd.exe` a PowerShell (`timeout` sin consola real falla al instante en vez de
+esperar, rompiendo los reintentos), el reemplazo pasó de "mover directo" a "renombrar el viejo a
+un lado y mover el nuevo al hueco" (Windows no deja sobreescribir el contenido de un `.exe`
+mapeado como imagen, aunque sí renombrarlo), y se probaron varias combinaciones de banderas de
+creación de proceso hasta encontrar una (`CREATE_NEW_CONSOLE` + auto-ocultación de la consola
+desde dentro del propio script) que no dejaba morir ni colgar al ayudante. Detalle completo,
+incluidas las combinaciones descartadas y por qué, en `CLAUDE.md`.
+
+**Limitación conocida, sin resolver del todo:** incluso con el mecanismo ya corregido, en pruebas
+reales repetidas el primer arranque del `.exe` recién auto-reemplazado tardó en responder mucho
+más de lo esperado (varios minutos; en algunas pruebas no llegó a responder dentro de la ventana
+de espera usada, hasta ~9 minutos). Aislado con pruebas específicas que aportan bastante certeza
+de la causa, pero sin confirmación 100%: NO es un cuelgue del mecanismo de reemplazo en sí (se
+verificó que el mismo `Start-Process` sobre un `.exe` que ya llevara un rato en disco arranca en
+segundos), sino algo específico de ejecutar por primera vez, en esa ruta exacta, un `.exe` recién
+escrito -- con toda probabilidad Windows Defender analizándolo por no tener firma digital y no
+haberse visto nunca antes ahí (mismo motivo que el aviso de SmartScreen en la descarga manual, ver
+Propuesta #7 más abajo). El caso normal -- arrancar sin que haya actualización pendiente, que será
+la inmensa mayoría de los arranques reales -- se verificó rápido y correcto (~4s). Se deja
+documentado como limitación conocida en vez de darlo por resuelto sin más porque el entorno de
+pruebas (una máquina de desarrollo que ha compilado y ejecutado decenas de variantes de este mismo
+`.exe` sin firmar en un rato) puede no ser representativo de la máquina de un usuario real -- si
+alguien lo confirma o descarta con datos de uso real, actualizar esta entrada.
 
 **Bloque 4 — GitHub Actions** (`.github/workflows/build-release.yml`): se dispara con el push de
 un tag `v*`, compila en `windows-latest` con `requirements-desktop.txt` + `build_exe.spec`, y

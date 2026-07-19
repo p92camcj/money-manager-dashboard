@@ -24,9 +24,15 @@ técnicos. Convive con la vía técnica (git clone + venv, Propuesta #2) sin sus
   mano en modo frameless. Detalle en `CLAUDE.md`.
 - **Auto-actualización vía GitHub Releases** (`updater.py`): al arrancar el `.exe`, comprueba la
   última release publicada y, si es más nueva que el `VERSION` empaquetado, se descarga y
-  auto-reemplaza (patrón de script `.bat` auxiliar que espera a que el proceso actual termine,
-  mueve el `.exe` nuevo sobre el viejo, y lo relanza). Nunca bloquea el arranque si falla la
-  comprobación (sin internet, GitHub no responde...).
+  auto-reemplaza (script auxiliar de PowerShell que espera a que el proceso actual termine,
+  renombra el `.exe` viejo a un lado, mueve el nuevo a ese hueco, y lo relanza). Nunca bloquea el
+  arranque si falla la comprobación (sin internet, GitHub no responde...). **Limitación conocida,
+  sin resolver del todo** (ver detalle en `BACKLOG.md`, Propuesta #6): en pruebas reales repetidas,
+  el primer arranque del `.exe` recién auto-reemplazado tardó bastante más de lo esperado en
+  responder por primera vez -- con toda probabilidad Windows Defender analizando un ejecutable sin
+  firma nunca visto antes en esa ruta, no un fallo del propio mecanismo (verificado por separado
+  que el mecanismo de reemplazo y el relanzamiento son correctos). El arranque normal, sin
+  actualización pendiente -- la inmensa mayoría de los casos reales -- es rápido y correcto.
 - **GitHub Actions** (`.github/workflows/build-release.yml`): compila el `.exe` en
   `windows-latest` y lo publica como asset de un Release al hacer push de un tag `v*`.
 - **`README_AMIGOS.md`**: guía de instalación sin terminología técnica (descargar, doble clic,
@@ -35,9 +41,10 @@ técnicos. Convive con la vía técnica (git clone + venv, Propuesta #2) sin sus
 Verificado compilando y ejecutando el `.exe` real en cada bloque (no solo que compilara): arranca,
 persiste `config.json`/`logs/` junto al propio ejecutable, sirve el dashboard igual que en modo
 navegador (probado con un extracto real de `samples/` vía `/api/analyze-excel`), abre en una
-ventana sin marco de navegador, y el auto-actualizador se probó tanto contra la API real de
-GitHub (sin conexión / sin releases publicados) como con una actualización simulada de principio
-a fin. Detalle completo de cada verificación en los commits de cada bloque y en `CLAUDE.md`.
+ventana sin marco de navegador, y el auto-actualizador se probó de principio a fin contra la API y
+el Release reales de GitHub -- encontrando y corrigiendo varios fallos reales del mecanismo de
+reemplazo por el camino (ver `BACKLOG.md`) hasta dejar uno documentado como limitación conocida en
+vez de sin verificar. Detalle completo en los commits de cada bloque y en `CLAUDE.md`.
 
 ## 0.7.1.18 - 2026-07-19
 
