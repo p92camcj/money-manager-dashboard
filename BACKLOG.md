@@ -14,6 +14,33 @@ estables) y `CHANGELOG.md` (qué cambió en cada versión) — este fichero es "
 
 ---
 
+## En progreso
+
+### Propuesta #6: distribución "amigable" con ejecutable Windows (segunda vía, no sustituye a la técnica)
+
+- **Estado:** en progreso.
+- **Anotado:** 2026-07-19.
+
+Objetivo: una segunda vía de distribución para usuarios sin conocimientos técnicos (no saben qué
+es una terminal ni git), pensada para convivir con la vía "técnica" ya existente (`git clone` +
+venv + auto-actualización por `git pull`, Propuesta #2 resuelta) — **ninguna sustituye a la otra**.
+Un amigo sin conocimientos técnicos descarga un único `.exe` de Windows desde GitHub Releases,
+doble clic, y se abre una ventana propia (no un navegador) con el dashboard.
+
+Bloques:
+1. Empaquetado con PyInstaller (un único `.exe`, solo Windows).
+2. Ventana nativa sin barra de título (pywebview + WebView2) en vez de navegador.
+3. Auto-actualización del `.exe` vía GitHub Releases (no git pull — no hay repo local en la
+   máquina del amigo).
+4. Compilación automática vía GitHub Actions al crear un tag, publicando el `.exe` como asset de
+   un Release.
+5. Documentación sin terminología técnica (`README_AMIGOS.md`).
+
+Se irá actualizando esta entrada al cerrar cada bloque, con el detalle de las decisiones de diseño
+tomadas (documentadas también en `CLAUDE.md`).
+
+---
+
 ## Bugs pendientes
 
 ### Bug #1: un fallo de conexión con el móvil se presenta como resultado válido
