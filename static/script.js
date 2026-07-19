@@ -733,7 +733,7 @@ function handleFilesSelected() {
     const fileInput = document.getElementById('excelInput');
     const files = Array.from(fileInput.files || []);
     if (files.length === 0) return;
-    pendingFiles = files.map(file => ({ file, label: defaultLabelFor(file.name), accountId: '' }));
+    pendingFiles = files.map(file => ({ file, label: defaultLabelFor(file.name), accountIds: [] }));
     renderFileLabelsList();
 }
 
@@ -741,27 +741,59 @@ function updatePendingLabel(idx, value) {
     pendingFiles[idx].label = value.trim() || defaultLabelFor(pendingFiles[idx].file.name);
 }
 
-function updatePendingAccount(idx, value) {
-    pendingFiles[idx].accountId = value;
-}
-
-// Lista plana {assetId, assetName} de todas las cuentas reales de Money Manager, para el
-// selector opcional "cuenta asociada" de cada fichero subido en conciliación.
+// Lista plana {assetId, assetName, linkAssetId, groupName} de todas las cuentas/tarjetas reales
+// de Money Manager, para el selector "cuentas asociadas" de cada fichero subido en conciliación.
+// Una tarjeta vinculada a una cuenta (p.ej. una tarjeta de débito) trae `linkAssetId` apuntando
+// al assetId de esa cuenta -- así se puede auto-marcar la tarjeta en cuanto el usuario elige la
+// cuenta, sin que tenga que recordar manualmente qué tarjetas cuelgan de dónde.
 function flattenAssets() {
     const out = [];
     (assetsData || []).forEach(g => {
         if (!g.children) return;
-        g.children.forEach(a => out.push({ assetId: a.assetId, assetName: a.assetName }));
+        g.children.forEach(a => out.push({
+            assetId: a.assetId,
+            assetName: a.assetName,
+            linkAssetId: a.linkAssetId || null,
+            groupName: g.assetName || '',
+        }));
     });
     return out;
 }
 
-function accountOptionsHtml(selectedId) {
-    const accounts = flattenAssets();
-    const opts = accounts.map(a =>
-        `<option value="${a.assetId}" ${String(selectedId) === String(a.assetId) ? 'selected' : ''}>${a.assetName}</option>`
-    ).join('');
-    return `<option value="">Sin cuenta asociada</option>${opts}`;
+function linkedCardIdsFor(accountId) {
+    return flattenAssets()
+        .filter(a => a.linkAssetId && String(a.linkAssetId) === String(accountId))
+        .map(a => String(a.assetId));
+}
+
+function accountOptionsMultiHtml(selectedIds) {
+    const selected = new Set((selectedIds || []).map(String));
+    const groups = {};
+    flattenAssets().forEach(a => {
+        (groups[a.groupName] || (groups[a.groupName] = [])).push(a);
+    });
+    return Object.entries(groups).map(([groupName, items]) => {
+        const opts = items.map(a =>
+            `<option value="${a.assetId}" ${selected.has(String(a.assetId)) ? 'selected' : ''}>${a.assetName}</option>`
+        ).join('');
+        return `<optgroup label="${groupName}">${opts}</optgroup>`;
+    }).join('');
+}
+
+// Al añadir una cuenta a la selección, auto-marca también sus tarjetas vinculadas (editable
+// después: el usuario puede quitarlas o añadir más a mano). Quitar una cuenta NO quita sus
+// tarjetas automáticamente -- solo se auto-AÑADE, nunca se auto-quita, para no sorprender al
+// usuario deseleccionando algo que marcó a mano.
+function updatePendingAccounts(idx, selectEl) {
+    const newSelected = Array.from(selectEl.selectedOptions).map(o => o.value);
+    const prevSelected = pendingFiles[idx].accountIds || [];
+    const addedNow = newSelected.filter(v => !prevSelected.includes(v));
+
+    const finalSelected = new Set(newSelected);
+    addedNow.forEach(accId => linkedCardIdsFor(accId).forEach(cardId => finalSelected.add(cardId)));
+
+    pendingFiles[idx].accountIds = Array.from(finalSelected);
+    Array.from(selectEl.options).forEach(o => { o.selected = finalSelected.has(o.value); });
 }
 
 function cancelPendingFiles() {
@@ -783,16 +815,16 @@ function renderFileLabelsList() {
             <span style="flex:1; font-size:0.9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${pf.file.name}">${pf.file.name}</span>
             <input type="text" value="${pf.label}" onchange="updatePendingLabel(${idx}, this.value)"
                    placeholder="Etiqueta" style="width:180px; padding:6px 10px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); border-radius:8px; color:white;">
-            <select onchange="updatePendingAccount(${idx}, this.value)"
-                    title="Cuenta de Money Manager asociada a este fichero (opcional) — acota el matching a esa cuenta y permite reconocer transferencias entre cuentas propias."
-                    style="width:200px; padding:6px 10px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); border-radius:8px; color:white;">
-                ${accountOptionsHtml(pf.accountId)}
+            <select multiple size="5" onchange="updatePendingAccounts(${idx}, this)"
+                    title="Cuentas/tarjetas de Money Manager asociadas a este fichero (opcional). Al elegir una cuenta se auto-marcan sus tarjetas vinculadas -- puedes quitarlas o añadir más a mano (Ctrl/Cmd+clic para selección múltiple). Acota el matching a estas cuentas/tarjetas y permite reconocer transferencias entre cuentas propias."
+                    style="width:220px; padding:6px 10px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); border-radius:8px; color:white;">
+                ${accountOptionsMultiHtml(pf.accountIds)}
             </select>
         </div>
     `).join('');
     container.innerHTML = `
         <h3>Ficheros seleccionados (${pendingFiles.length})</h3>
-        <p style="color:var(--text-muted); font-size:0.85rem; margin:5px 0 15px;">Ponle una etiqueta corta a cada uno (p.ej. "Revolut", "Cuenta Sabadell") para distinguirlos en la lista de propuestas. La cuenta asociada es opcional: si la indicas, el matching se acota a esa cuenta y se reconocen transferencias entre cuentas propias.</p>
+        <p style="color:var(--text-muted); font-size:0.85rem; margin:5px 0 15px;">Ponle una etiqueta corta a cada uno (p.ej. "Revolut", "Cuenta Sabadell") para distinguirlos en la lista de propuestas. Las cuentas asociadas son opcionales (Ctrl/Cmd+clic para marcar varias): al elegir una cuenta se auto-marcan sus tarjetas vinculadas, editable después. Acotan el matching a esas cuentas/tarjetas y permiten reconocer transferencias entre cuentas propias — si una línea del extracto no encaja en ninguna de las cuentas marcadas, se busca igualmente en el resto de Money Manager y se avisa con un badge.</p>
         <div>${rowsHtml}</div>
         <div class="modal-buttons" style="margin-top:15px;">
             <button class="btn-secondary btn-sm" onclick="cancelPendingFiles()">Cancelar</button>
@@ -811,7 +843,7 @@ async function confirmUploadFiles() {
         pendingFiles.forEach(pf => {
             formData.append('files', pf.file);
             formData.append('labels', pf.label);
-            formData.append('accountIds', pf.accountId || '');
+            formData.append('accountIds', (pf.accountIds || []).join(','));
         });
         formData.append('windowDays', 3);
 
@@ -927,6 +959,9 @@ function renderProposalsList() {
         const transferTag = p.is_transfer
             ? `<span class="badge badge-info" title="Esta línea encaja con una transferencia entre cuentas propias en Money Manager${p.transfer_role ? ` (lado ${p.transfer_role})` : ''}.">🔁 Transferencia interna</span>`
             : '';
+        const fallbackTag = p.account_fallback
+            ? `<span class="badge badge-warning" title="No se encontró dentro de las cuentas/tarjetas que marcaste para este fichero -- esta coincidencia viene de otra cuenta de Money Manager. Revísala con más atención antes de confirmar.">⚠️ Fuera de la cuenta esperada</span>`
+            : '';
 
         card.className = `card glass proposal-card ${isDuplicate ? 'duplicate' : 'new'}`;
         card.innerHTML = `
@@ -935,6 +970,7 @@ function renderProposalsList() {
                 <span style="display:flex; gap:6px; flex-wrap:wrap;">
                     <span class="badge badge-info" title="${p.source_filename || ''}">${p.source_label || ''}</span>
                     <span class="badge ${badgeColor}">${badgeText}</span>
+                    ${fallbackTag}
                     ${transferTag}
                 </span>
             </div>

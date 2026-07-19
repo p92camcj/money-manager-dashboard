@@ -8,30 +8,48 @@ AMOUNT_TOLERANCE = 0.01  # margen de 1 céntimo para evitar falsos negativos por
 
 
 def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, desc_col, window_days=3,
-                             account_id=None):
+                             account_ids=None):
     """
     Algoritmo de Matching Avanzado para Conciliación Bancaria.
     excel_df: DataFrame con las transacciones del banco.
     mm_transactions: Lista de diccionarios con las transacciones de Money Manager.
-    account_id: assetId de Money Manager asociado al fichero bancario que se está conciliando
-        (opcional, viene de un selector en el frontend). Si se indica, acota el matching a
-        movimientos de esa cuenta:
-          - Movimiento normal: solo candidatos cuyo `assetId` sea `account_id`.
-          - Transferencia (`inOutType == 'Transferencia'`): `account_id` puede ser el origen
-            (`assetId`) o el destino (`toAssetId`/`targetAssetId`) de la MISMA transacción de
-            Money Manager. Se usa el signo del importe bancario para decidir el lado: negativo ->
-            origen, positivo -> destino. Así, una transferencia entre dos cuentas propias (p.ej.
-            Cajasur -> Revolut) puede encontrarse como match tanto desde el extracto del banco
-            origen como desde el del banco destino sin que el primero "consuma" el otro lado —
-            cada lado se marca como usado por separado (`matched_origin` / `matched_destination`),
-            así que la misma transacción puede resolverse como match hasta dos veces (una por
-            lado), pero nunca dos veces por el mismo lado.
-        Si no se indica, se mantiene el comportamiento anterior: no hay forma de saber a qué lado
-        de una transferencia corresponde el fichero, así que se consume como un movimiento normal
-        (una sola vez en conjunto) — ver Propuesta #4 en BACKLOG.md, limitación conocida y
-        aceptada cuando ningún fichero de la tanda tiene cuenta asociada.
+    account_ids: lista de `assetId` de Money Manager asociados al fichero bancario que se está
+        conciliando (opcional, viene de un selector multi-selección en el frontend — típicamente
+        una cuenta MÁS las tarjetas vinculadas a ella vía `linkAssetId`, ver
+        flattenAssets()/updatePendingAccounts() en script.js). Si se indica, el matching se hace
+        en dos fases:
+
+        FASE 1 (prioritaria): solo se consideran candidatos cuyo `assetId` esté en
+        `account_ids` — para movimientos normales, directamente; para transferencias
+        (`inOutType == 'Transferencia'`), un `assetId` de `account_ids` puede ser el origen
+        (`assetId` de la transacción) o el destino (`toAssetId`/`targetAssetId`), decidido por el
+        signo del importe bancario (negativo -> origen, positivo -> destino) para no confundir el
+        lado. Cada lado de una transferencia se consume por separado (`matched_origin` /
+        `matched_destination`), así que la misma transacción puede resolverse como match desde el
+        extracto del banco origen Y desde el del banco destino sin colisión (ver
+        CLAUDE.md, "Matching acotado por cuenta y transferencias entre bancos").
+
+        FASE 2 (fallback, solo si la fase 1 no encuentra NINGÚN candidato para una línea
+        concreta dentro de la ventana de fechas/importe): repite la búsqueda para esa línea sin
+        el filtro de `account_ids`, igual que el comportamiento de antes de introducir el
+        filtro por cuenta. Existe porque un extracto bancario de una CUENTA suele mezclar
+        movimientos hechos directamente en la cuenta con movimientos hechos con una TARJETA
+        vinculada a ella (`linkAssetId`) -- y Money Manager registra unos y otros con `assetId`
+        distinto (el de la cuenta, o el de la tarjeta) de forma inconsistente según el propio
+        origen del movimiento, no según qué extracto lo contiene. Si el usuario no marcó esa
+        tarjeta concreta en el selector (o hay alguna otra cuenta relacionada que no se pensó
+        marcar), la fase 2 evita un falso negativo — a cambio, el resultado se marca con
+        `account_fallback: True` para que el frontend lo distinga visualmente de un match
+        dentro de la cuenta esperada (menos automático, pide más atención al usuario). En la
+        fase 2 una transferencia se consume como movimiento normal (un único `matched_origin`,
+        sin distinguir lado) porque fuera del contexto de cuenta no hay forma fiable de saber
+        a qué lado corresponde.
+
+        Si `account_ids` es `None`/vacío, no hay fase 1: se busca directamente sin filtrar por
+        cuenta (comportamiento previo a la Propuesta #5/#6) — ver Propuesta #4 en BACKLOG.md,
+        limitación conocida y aceptada cuando ningún fichero de la tanda tiene cuenta asociada.
     """
-    account_id = str(account_id) if account_id else None
+    account_ids_set = {str(a) for a in account_ids} if account_ids else None
 
     if not mm_transactions:
         mm_df = pd.DataFrame(columns=['id', 'mbDate', 'mbCash', 'mbContent', 'assetId', 'destAssetId', 'is_transfer'])
@@ -69,30 +87,50 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
             continue
 
         def _side(row):
-            """Lado de la transferencia al que corresponde `account_id` para este importe
-            bancario concreto — 'destination' solo si la cuenta asociada es el destino de la
-            transferencia Y el importe es positivo (entrada); 'origin' en cualquier otro caso."""
-            if account_id and row['is_transfer'] and row['destAssetId'] == account_id and bank_amount > 0:
+            """Lado de la transferencia al que corresponde algún assetId de `account_ids` para
+            este importe bancario concreto — 'destination' solo si la cuenta asociada es el
+            destino de la transferencia Y el importe es positivo (entrada); 'origin' en
+            cualquier otro caso. Solo tiene sentido cuando se resolvió dentro de la fase 1."""
+            if account_ids_set and row['is_transfer'] and row['destAssetId'] in account_ids_set and bank_amount > 0:
                 return 'destination'
             return 'origin'
 
-        def _available(row):
-            if account_id:
+        def _available(row, restrict):
+            if restrict and account_ids_set:
                 if row['is_transfer']:
-                    if row['assetId'] == account_id and bank_amount < 0:
+                    if row['assetId'] in account_ids_set and bank_amount < 0:
                         return not row['matched_origin']
-                    if row['destAssetId'] == account_id and bank_amount > 0:
+                    if row['destAssetId'] in account_ids_set and bank_amount > 0:
                         return not row['matched_destination']
-                    return False  # esta cuenta no participa en esta transferencia, o signo contrario
-                return row['assetId'] == account_id and not row['matched_origin']
+                    return False  # ninguna cuenta/tarjeta asociada participa en esta transferencia, o signo contrario
+                return row['assetId'] in account_ids_set and not row['matched_origin']
+            # Fase 2 (fallback) o sin account_ids en absoluto: comportamiento previo, consumo
+            # único sin distinguir lado de transferencia.
             return not row['matched_origin']
 
         time_mask = (mm_df['mbDate'] >= bank_date - timedelta(days=window_days)) & \
                     (mm_df['mbDate'] <= bank_date + timedelta(days=window_days))
         amount_mask = np.isclose(mm_df['mbCash'].abs(), abs(bank_amount), atol=AMOUNT_TOLERANCE)
         pool = mm_df[time_mask & amount_mask]
-        avail_mask = pool.apply(_available, axis=1) if not pool.empty else pd.Series(dtype=bool)
-        candidates = pool[avail_mask] if not pool.empty else pool
+
+        account_fallback = False
+        if account_ids_set:
+            avail_mask = pool.apply(lambda r: _available(r, restrict=True), axis=1) if not pool.empty else pd.Series(dtype=bool)
+            candidates = pool[avail_mask] if not pool.empty else pool
+            if candidates.empty and not pool.empty:
+                # Fase 1 no encontró NADA dentro de las cuentas/tarjetas esperadas, pero sí hay
+                # transacciones de MM con la misma fecha/importe -- repetir sin el filtro de
+                # cuenta antes de rendirse y declarar la línea "nuevo movimiento".
+                avail_mask_fb = pool.apply(lambda r: _available(r, restrict=False), axis=1)
+                candidates = pool[avail_mask_fb]
+                account_fallback = not candidates.empty
+        else:
+            avail_mask = pool.apply(lambda r: _available(r, restrict=False), axis=1) if not pool.empty else pd.Series(dtype=bool)
+            candidates = pool[avail_mask] if not pool.empty else pool
+
+        # Dentro de la fase 1 (con contexto de cuenta fiable) sí distinguimos lado de
+        # transferencia; en fallback o sin account_ids, no.
+        trust_account_context = bool(account_ids_set) and not account_fallback
 
         status = 'new'
         match_confidence = 0
@@ -116,7 +154,7 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
 
                 # Marcar como emparejado el lado correspondiente para no reutilizarlo — solo ese
                 # lado, para que el otro banco de la transferencia lo pueda seguir encontrando.
-                if is_transfer_result:
+                if is_transfer_result and trust_account_context:
                     side = _side(best_match)
                     transfer_role = 'destino' if side == 'destination' else 'origen'
                     mm_df.at[best_match_pos, 'matched_destination' if side == 'destination' else 'matched_origin'] = True
@@ -162,6 +200,7 @@ def match_bank_transactions(excel_df, mm_transactions, date_col, amount_col, des
             'candidates': candidate_list,
             'is_transfer': is_transfer_result,
             'transfer_role': transfer_role,
+            'account_fallback': account_fallback,
         })
 
     return results

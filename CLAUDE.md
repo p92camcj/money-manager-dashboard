@@ -45,10 +45,13 @@ backend/
                        interno — un bug detectado el 2026-07-18 usaba `best_match.name` /
                        `idx_cand` (posición) en vez del campo `id`, lo que rompía silenciosamente
                        "Ver Registro Asociado" y `confirmMatch` en el frontend. Si tocas esta
-                       función, no reintroduzcas esa confusión entre posición e id real. Acepta un
-                       `account_id` opcional (el `assetId` de Money Manager asociado al fichero
-                       bancario, elegido en el frontend) — ver "Matching acotado por cuenta y
-                       transferencias entre bancos" más abajo.
+                       función, no reintroduzcas esa confusión entre posición e id real. Acepta
+                       `account_ids` opcional (lista de `assetId` de Money Manager asociados al
+                       fichero bancario, elegidos en el frontend — normalmente una cuenta más las
+                       tarjetas vinculadas a ella) — ver "Matching acotado por cuenta y
+                       transferencias entre bancos" más abajo, incluida la fase 2 (fallback) que
+                       corrige la regresión de falsos negativos con tarjetas detectada el
+                       2026-07-19.
   budget_engine.py    BudgetEngine: construye el árbol jerárquico presupuesto vs. gasto real
                        por categoría/subcategoría, y calcula flujos de caja (ingreso/gasto/
                        transferencias) ignorando transferencias en el cómputo de presupuesto.
@@ -68,19 +71,20 @@ app.py             Flask app. Sirve static/, y expone:
                               una limitación). Campos del form-data: `files` (uno o más ficheros),
                               `labels` (una etiqueta por fichero, MISMO orden que `files` — si una
                               etiqueta viene vacía, se usa el nombre de fichero) y `accountIds`
-                              (opcional, MISMO orden que `files` — el `assetId` de Money Manager
-                              que el usuario asoció a ese fichero en el selector del frontend;
-                              cadena vacía si no se asoció ninguna). Cada fichero se parsea con
+                              (opcional, MISMO orden que `files` — uno o varios `assetId` de Money
+                              Manager por fichero SEPARADOS POR COMAS, p.ej. `"ACC1,CARD1"`, que
+                              el usuario marcó en el selector multi-selección del frontend; cadena
+                              vacía si no se asoció ninguno). Cada fichero se parsea con
                               backend/bank_statement_parser.py::parse_bank_statement() (ver
                               sección dedicada). Se calcula el rango de fechas COMBINADO de
                               todos los ficheros de la tanda y se hace una única llamada a
                               `getDataByPeriod` — no una por fichero. El matching
                               (`match_bank_transactions`) se hace por SEPARADO para cada fichero
-                              contra ese mismo conjunto de transacciones del móvil, pasando el
-                              `account_id` de ese fichero si lo tiene (ver "Matching acotado por
-                              cuenta y transferencias entre bancos" más abajo). Sin cuenta
-                              asociada en ningún fichero de la tanda, dos ficheros siguen sin
-                              enterarse el uno del otro (limitación conocida, ver `BACKLOG.md` —
+                              contra ese mismo conjunto de transacciones del móvil, pasando la
+                              lista `account_ids` de ese fichero si la tiene (ver "Matching
+                              acotado por cuenta y transferencias entre bancos" más abajo). Sin
+                              cuentas asociadas en ningún fichero de la tanda, dos ficheros siguen
+                              sin enterarse el uno del otro (limitación conocida, ver `BACKLOG.md` —
                               un movimiento que aparezca en dos extractos a la vez, p.ej. una
                               transferencia entre cuentas propias, puede proponerse como "nuevo"
                               en ambos). Cada propuesta lleva `source_label` y `source_filename`,
@@ -351,28 +355,51 @@ solape en fechas con uno ya revisado.
 ### Matching acotado por cuenta y transferencias entre bancos
 
 Al etiquetar cada fichero subido (ver `/api/analyze-excel` más arriba), el usuario puede además
-asociarle **opcionalmente** una cuenta real de Money Manager (`accountIds` en el form-data,
-`account_id` en `match_bank_transactions()`) desde un selector poblado con `assetsData` en el
-frontend (`flattenAssets()` en `script.js`). Sin cuenta asociada, el comportamiento es exactamente
-el de antes (búsqueda sin filtrar por cuenta, una transferencia se consume una sola vez en
-conjunto — ver Propuesta #4 en `BACKLOG.md`).
+asociarle **opcionalmente** una o varias cuentas/tarjetas reales de Money Manager (`accountIds`
+en el form-data, `account_ids` en `match_bank_transactions()`, lista) desde un selector
+multi-selección poblado con `assetsData` en el frontend (`flattenAssets()` en `script.js`). Sin
+cuentas asociadas, el comportamiento es exactamente el de antes (búsqueda sin filtrar por cuenta,
+una transferencia se consume una sola vez en conjunto — ver Propuesta #4 en `BACKLOG.md`).
 
-**Con cuenta asociada**, `match_bank_transactions()` **filtra estrictamente** — no solo prioriza —
-los candidatos a esa cuenta, para reducir falsos positivos entre cuentas distintas con importes
-parecidos:
+**Cuentas y tarjetas — `linkAssetId`**: `getAssetData` devuelve tarjetas vinculadas a una cuenta
+(p.ej. una tarjeta de débito) como assets con su **propio `assetId`** (distinto del de la cuenta)
+más un campo `linkAssetId` que apunta al `assetId` de la cuenta madre — verificado en vivo el
+2026-07-19 contra datos reales: un grupo de tarjetas de débito, cada tarjeta con `linkAssetId` =
+`assetId` de su cuenta; el resto de grupos (efectivo, ahorros, préstamos, tarjeta prepago,
+Revolut...) no usan `linkAssetId`, es específico de tarjetas vinculadas a una cuenta. El frontend
+usa esto en `linkedCardIdsFor()`: al marcar una cuenta en el selector, auto-marca también sus
+tarjetas (editable después — el usuario puede quitarlas o añadir más a mano; solo se auto-AÑADE
+al marcar una cuenta nueva, nunca se auto-quita nada).
+
+**Por qué hace falta esto — `getDataByPeriod` es inconsistente sobre qué `assetId` usa**: un
+extracto bancario de una cuenta mezcla movimientos hechos directamente en la cuenta con
+movimientos hechos con una tarjeta vinculada a ella, pero Money Manager no registra ambos con el
+mismo `assetId` — verificado en vivo el 2026-07-19 sobre 1165 transacciones reales de un rango de
+7 meses: 591 con el `assetId` de una cuenta directamente, 218 con el `assetId` de una tarjeta
+vinculada a otra cuenta distinta de esas 591. Si el matching filtrara estrictamente por un único
+`assetId` de cuenta (como hacía la versión anterior, Propuesta #5), los movimientos hechos con
+tarjeta se declaraban "nuevo" por error — regresión real detectada por el usuario, corregida con
+el diseño de dos fases de abajo. Confirmado con un fichero real de `samples/`
+(`casa_julio_250626-180726.xls`, 102 líneas) contra datos reales del móvil: la versión con filtro
+estricto de una sola cuenta daba 42 falsos "nuevo" de 102 líneas; con las dos fases, solo 4 (los
+genuinamente nuevos).
+
+**FASE 1 (prioritaria)**: `match_bank_transactions()` **filtra estrictamente** — no solo
+prioriza — los candidatos a `account_ids`, para reducir falsos positivos entre cuentas distintas
+con importes parecidos:
 
 - **Movimiento normal** (`inOutType` distinto de `Transferencia`): solo se consideran candidatos
-  cuyo `assetId` sea `account_id`.
+  cuyo `assetId` esté en `account_ids`.
 - **Transferencia** (`inOutType == 'Transferencia'`): una transferencia en Money Manager es UNA
   sola transacción con `assetId` = cuenta origen y `toAssetId`/`targetAssetId` = cuenta destino —
   pero en dos extractos bancarios reales (el del banco origen y el del banco destino) aparece como
-  DOS líneas distintas (una negativa, una positiva). `account_id` puede coincidir con el origen o
-  con el destino de la misma transacción de Money Manager; se usa el signo del importe bancario
-  para decidir el lado (negativo → origen, positivo → destino) y no confundirlos. Cada lado se
-  marca como "consumido" por separado (`matched_origin` / `matched_destination` en el DataFrame
-  interno de `mm_df`, no un único flag `matched` como en el resto del matching) — así, la MISMA
-  transacción de Money Manager puede resolverse como match desde el fichero del banco origen Y
-  desde el fichero del banco destino, sin que el primero en procesarse "se quede" con ella (cada
+  DOS líneas distintas (una negativa, una positiva). Un elemento de `account_ids` puede coincidir
+  con el origen o con el destino de la misma transacción de Money Manager; se usa el signo del
+  importe bancario para decidir el lado (negativo → origen, positivo → destino) y no confundirlos.
+  Cada lado se marca como "consumido" por separado (`matched_origin` / `matched_destination` en el
+  DataFrame interno de `mm_df`, no un único flag `matched` como en el resto del matching) — así, la
+  MISMA transacción de Money Manager puede resolverse como match desde el fichero del banco origen
+  Y desde el fichero del banco destino, sin que el primero en procesarse "se quede" con ella (cada
   fichero se sigue analizando en una llamada independiente a `match_bank_transactions()`, así que
   esto funciona sin que un fichero necesite saber nada del otro). Dentro de un mismo fichero, un
   lado ya consumido no se puede reclamar dos veces (dos líneas bancarias con igual importe no
@@ -380,17 +407,34 @@ parecidos:
   - **Campo real de la cuenta destino sin verificar en vivo**: el esquema de columnas de PC
     Manager (`reference/all_mm.js`) declara tanto `toAssetId` como `targetAssetId`; no hay
     certeza de cuál rellena realmente el XML de `getDataByPeriod` (ver la inconsistencia ya
-    documentada más arriba entre vocabulario de lectura y escritura). `match_bank_transactions()`
-    se queda con el que venga relleno de los dos, sin asumir cuál es. Si compruebas contra el
-    móvil real cuál es, actualiza esto.
-- **Sin cuenta asociada en el fichero**: no se intenta adivinar el lado de una transferencia —
-  se comporta como un movimiento normal de consumo único (comportamiento previo intacto).
-- Cada propuesta resultante lleva `is_transfer` (bool) y, si aplica, `transfer_role`
-  (`'origen'`/`'destino'`/`None`); cada candidato de `candidates[]` lleva su propio `is_transfer`.
-  El frontend usa esto para mostrar un badge "🔁 Transferencia interna" en vez de dejar que parezca
-  un duplicado exacto sin explicación.
-- **Verificado solo con datos sintéticos** (no hay en `samples/` ningún par de extractos reales que
-  compartan una transferencia entre bancos todavía) — ver script de verificación usado durante el
+    documentada más arriba entre vocabulario de lectura y escritura) — sigue sin verificar porque
+    no hubo ninguna transferencia real en el rango consultado el 2026-07-19 (1165 transacciones,
+    0 transferencias). `match_bank_transactions()` se queda con el que venga relleno de los dos,
+    sin asumir cuál es. Si compruebas contra el móvil real cuál es, actualiza esto.
+
+**FASE 2 (fallback)**: si para una línea concreta del banco la fase 1 no encuentra NINGÚN
+candidato dentro de la ventana de fechas/importe (pero sí hay transacciones de Money Manager con
+esa fecha/importe en general), se repite la búsqueda para esa línea sin el filtro de
+`account_ids` — igual que el comportamiento de antes de introducir el filtro por cuenta. El
+resultado se marca con `account_fallback: true` (frontend: badge "⚠️ Fuera de la cuenta
+esperada") para que el usuario lo revise con más atención antes de confirmar — no es tan fiable
+como un match dentro de las cuentas/tarjetas que él mismo marcó. En fase 2 una transferencia se
+consume como movimiento normal (un único `matched_origin`, sin distinguir lado) porque fuera del
+contexto de cuenta no hay forma fiable de saber a qué lado corresponde.
+
+- **Sin `account_ids` en el fichero**: no hay fase 1, se busca directamente sin filtrar (fase 2
+  desde el principio) — no se intenta adivinar el lado de una transferencia, comportamiento
+  previo intacto.
+- Cada propuesta resultante lleva `is_transfer` (bool), `account_fallback` (bool) y, si aplica y
+  se resolvió en fase 1, `transfer_role` (`'origen'`/`'destino'`/`None` — en fase 2 siempre
+  `None`, no hay contexto de cuenta fiable para determinarlo); cada candidato de `candidates[]`
+  lleva su propio `is_transfer`. El frontend usa esto para mostrar badges "🔁 Transferencia
+  interna" y "⚠️ Fuera de la cuenta esperada" en vez de dejar que parezcan un duplicado exacto sin
+  explicación.
+- **Transferencias verificadas solo con datos sintéticos** (no hay en `samples/` ningún par de
+  extractos reales que compartan una transferencia entre bancos todavía, y no hubo ninguna
+  transferencia real en el rango consultado en vivo el 2026-07-19) — ver script de verificación
+  usado durante el
   desarrollo, no comprometido al repo. Si aparece un caso real que no encaje, revisar primero el
   campo de cuenta destino (punto anterior) antes de asumir que la lógica de lados está mal.
 

@@ -2,6 +2,37 @@
 
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`).
 
+## 0.7.1.18 - 2026-07-19
+
+Fix: filtro estricto de una sola cuenta introducía falsos negativos con movimientos de tarjeta
+(Bug #3, regresión sobre la Propuesta #5).
+
+- **Diagnóstico confirmado con datos reales** (móvil conectado en esta sesión): las tarjetas
+  vinculadas a una cuenta (p.ej. una tarjeta de débito) tienen su propio `assetId` + un campo
+  `linkAssetId` que apunta al `assetId` de la cuenta madre. Sobre 1165 transacciones reales de 7
+  meses, 591 usaban el `assetId` de una cuenta directamente y 218 el de una tarjeta vinculada a
+  otra cuenta — Money Manager no es consistente sobre cuál usa para cada movimiento, así que un
+  extracto bancario de una cuenta que mezcla ambos tipos rompía el filtro estricto de una sola
+  cuenta introducido en la Propuesta #5.
+- **Selector de cuenta por fichero, de único a multi-selección**: al marcar una cuenta se
+  auto-marcan sus tarjetas vinculadas (vía `linkAssetId`), editable después. `accountIds` pasa de
+  un valor por fichero a una lista (separada por comas en el form-data).
+- **Matching en dos fases** en `match_bank_transactions()`: fase 1 (prioritaria) filtra
+  estrictamente por las cuentas/tarjetas seleccionadas, igual que antes; fase 2 (fallback), solo
+  si una línea del banco no encuentra NINGÚN candidato en fase 1, repite la búsqueda sin el
+  filtro de cuenta en vez de declararla "nuevo" directamente. El resultado se marca
+  `account_fallback: true` — badge "⚠️ Fuera de la cuenta esperada" en el frontend, distinto de
+  un match normal, para que el usuario lo revise con más atención antes de confirmar.
+- **Verificado con datos reales, antes vs. después** (no solo "debería funcionar"): fichero real
+  de `samples/` (`casa_julio_250626-180726.xls`, 102 líneas) contra datos reales del móvil,
+  asociando solo la cuenta (reproduciendo el bug) — antes: 42 falsos "nuevo" de 102 líneas
+  (`{'exact_match': 25, 'new': 42, 'suggested_match': 5, 'probable_match': 28}`); después: solo 4
+  "nuevo" genuinos (`{'exact_match': 60, 'new': 4, 'suggested_match': 6, 'probable_match': 30}`,
+  38 recuperados por fallback). Con cuenta + tarjeta autosugeridas, solo 9 de esos 38 necesitan
+  fallback (el resto se resuelve directamente en fase 1). Sin regresión en los 7 ficheros de
+  `samples/` sin cuenta asociada, ni en el matching de transferencias (Propuesta #5) con
+  `account_ids` como lista. Detalle completo en `CLAUDE.md` y `BACKLOG.md` (Bug #3, resuelto).
+
 ## 0.7.0.17 - 2026-07-18
 
 Preparación del proyecto para distribución pública (Propuesta #2): repo público, config.json

@@ -88,6 +88,56 @@ limitación original persiste tal cual estaba documentada.
 
 ## Resueltos
 
+### Bug #3: filtro estricto de una sola cuenta introducía falsos negativos con movimientos de tarjeta
+
+- **Resuelto:** 2026-07-19, versión `0.7.1.18`.
+- **Detectado:** 2026-07-19, reportado por el usuario tras usar en producción el filtro por
+  cuenta de la Propuesta #5.
+
+**Regresión**: al asociar un fichero a una única cuenta de Money Manager (Propuesta #5) para
+acotar el matching, los movimientos hechos con una TARJETA vinculada a esa cuenta (vía
+`linkAssetId`) dejaban de encontrarse — el extracto bancario de una cuenta mezcla indistintamente
+movimientos hechos en la cuenta y movimientos hechos con la tarjeta, pero Money Manager registra
+unos y otros con `assetId` distinto (el de la cuenta, o el de la tarjeta), y el filtro estricto de
+un único `assetId` solo veía uno de los dos.
+
+**Diagnóstico confirmado con datos reales** (móvil conectado en esta sesión, ver detalle completo
+en `CLAUDE.md`, sección "Matching acotado por cuenta y transferencias entre bancos"):
+`getAssetData` confirma que las tarjetas vinculadas a una cuenta tienen su propio `assetId` +
+`linkAssetId` apuntando a la cuenta madre; sobre 1165 transacciones reales de 7 meses, 591 usaban
+el `assetId` de una cuenta directamente y 218 el de una tarjeta vinculada a otra cuenta —
+confirma la inconsistencia exactamente como la reportó el usuario.
+
+**Corrección**:
+1. Selector de cuenta por fichero pasa de único a multi-selección (`accountIds` como lista, no
+   string). Al marcar una cuenta se auto-marcan sus tarjetas vinculadas (`linkedCardIdsFor()` vía
+   `linkAssetId`), editable después — el usuario puede quitarlas o añadir más a mano.
+2. `match_bank_transactions()` pasa a dos fases: FASE 1 (prioritaria) filtra estrictamente por
+   `account_ids`, igual que antes pero contra una lista, no un único id. FASE 2 (fallback): si una
+   línea del banco no encuentra NINGÚN candidato en fase 1 dentro de la ventana de fechas/importe,
+   repite la búsqueda sin el filtro de cuenta (comportamiento previo a la Propuesta #5) en vez de
+   declararla "nuevo" directamente. El resultado se marca `account_fallback: true` (badge "⚠️
+   Fuera de la cuenta esperada" en el frontend) para que el usuario lo revise con más atención.
+
+**Verificación real, antes vs. después** (no solo "debería funcionar"): fichero real de
+`samples/` (`casa_julio_250626-180726.xls`, 102 líneas) contra datos reales del móvil obtenidos en
+esta sesión, asociando solo la cuenta (sin la tarjeta, reproduciendo el bug):
+- **Antes** (código de la Propuesta #5, filtro estricto sin fallback):
+  `{'exact_match': 25, 'new': 42, 'suggested_match': 5, 'probable_match': 28}` — 42 falsos "nuevo"
+  de 102 líneas.
+- **Después** (fase 1 + fase 2 fallback, mismo fichero, misma cuenta sola):
+  `{'exact_match': 60, 'new': 4, 'suggested_match': 6, 'probable_match': 30}` — solo 4 "nuevo"
+  (los genuinamente nuevos), 38 recuperados por fallback.
+- **Después, ideal** (cuenta + tarjeta autosugeridas): mismos totales finales, pero solo 9 de esos
+  38 necesitan pasar por fallback (el resto se resuelve directamente en fase 1 al incluir la
+  tarjeta).
+
+También verificado: sin regresión en los 7 ficheros de `samples/` (Cajasur, BBVA, EVO cuenta, EVO
+tarjeta, Sabadell, Revolut CSV) sin cuenta asociada; regresión de transferencias (Propuesta #5)
+sigue funcionando igual con `account_ids` como lista; lógica de autosugerencia de tarjetas
+verificada en un sandbox de Node ejecutando `script.js` real. Script de verificación no
+comprometido al repo.
+
 ### Propuesta #2: distribución a amigos con un clic y auto-actualización
 
 - **Resuelto:** 2026-07-18, versión `0.7.0.17`. Commits: `3a97788` (marcado en progreso),

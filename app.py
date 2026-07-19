@@ -193,33 +193,39 @@ def proxy(endpoint):
 @app.route('/api/analyze-excel', methods=['POST'])
 def analyze_excel():
     """Analiza uno o varios extractos bancarios (Excel o CSV) a la vez, cada uno con su propia
-    etiqueta de origen y, opcionalmente, una cuenta de Money Manager asociada. Una sola consulta
-    a Money Manager cubriendo el rango de fechas combinado de todos los ficheros, y el matching
-    se hace por separado para cada fichero. Cuando un fichero tiene cuenta asociada, el matching
-    se acota a esa cuenta (ver `account_id` en `match_bank_transactions`), lo que además permite
-    que una transferencia entre dos cuentas propias (p.ej. Cajasur -> Revolut) se resuelva como
-    match tanto desde el extracto del banco origen como desde el del banco destino, sin que uno
-    "consuma" el lado del otro. Sin cuenta asociada en ningún fichero de la tanda, dos ficheros
+    etiqueta de origen y, opcionalmente, una o varias cuentas/tarjetas de Money Manager
+    asociadas. Una sola consulta a Money Manager cubriendo el rango de fechas combinado de todos
+    los ficheros, y el matching se hace por separado para cada fichero. Cuando un fichero tiene
+    cuentas asociadas, el matching se hace en dos fases (ver `match_bank_transactions`): acotado
+    a esas cuentas/tarjetas primero, y solo si una línea concreta no encuentra NINGÚN candidato
+    así, una segunda pasada sin el filtro (`account_fallback: true` en el resultado) — un
+    extracto de una cuenta mezcla movimientos hechos directamente en la cuenta con movimientos
+    hechos con tarjetas vinculadas a ella (`linkAssetId`), y Money Manager no es consistente
+    sobre cuál `assetId` usa para cada uno. El filtro por cuenta además permite que una
+    transferencia entre dos cuentas propias (p.ej. Cajasur -> Revolut) se resuelva como match
+    tanto desde el extracto del banco origen como desde el del banco destino, sin que uno
+    "consuma" el lado del otro. Sin cuentas asociadas en ningún fichero de la tanda, dos ficheros
     siguen sin enterarse el uno del otro (limitación conocida, ver Propuesta #4 en BACKLOG.md)."""
     uploaded_files = request.files.getlist('files')
     labels = request.form.getlist('labels')
-    account_ids = request.form.getlist('accountIds')
+    account_ids_raw = request.form.getlist('accountIds')  # uno por fichero, ids separados por comas
     window_days = int(request.form.get('windowDays', 3))
 
     if not uploaded_files:
         return jsonify({"error": "No hay archivos"}), 400
 
     try:
-        parsed_files = []  # [{label, filename, df, account_id}]
+        parsed_files = []  # [{label, filename, df, account_ids}]
         file_errors = []  # [{label, filename, error}]
         for idx, file in enumerate(uploaded_files):
             label = (labels[idx].strip() if idx < len(labels) and labels[idx].strip() else file.filename)
-            account_id = account_ids[idx].strip() if idx < len(account_ids) and account_ids[idx].strip() else None
+            raw_field = account_ids_raw[idx].strip() if idx < len(account_ids_raw) else ''
+            account_ids = [a.strip() for a in raw_field.split(',') if a.strip()] or None
             file_bytes = file.read()
             try:
                 df, header_row_idx, column_map = parse_bank_statement(file_bytes, file.filename)
-                logger.info(f"[analyze-excel] '{file.filename}' ({label}): cabecera detectada en fila {header_row_idx} (0-indexada) | columnas: {column_map} | cuenta asociada: {account_id or '(ninguna)'}")
-                parsed_files.append({'label': label, 'filename': file.filename, 'df': df, 'account_id': account_id})
+                logger.info(f"[analyze-excel] '{file.filename}' ({label}): cabecera detectada en fila {header_row_idx} (0-indexada) | columnas: {column_map} | cuentas asociadas: {account_ids or '(ninguna)'}")
+                parsed_files.append({'label': label, 'filename': file.filename, 'df': df, 'account_ids': account_ids})
             except BankStatementFormatError as e:
                 logger.error(f"[analyze-excel] '{file.filename}' ({label}): estructura no reconocida: {e}")
                 file_errors.append({'label': label, 'filename': file.filename, 'error': str(e)})
@@ -268,7 +274,7 @@ def analyze_excel():
                 amount_col='Importe',
                 desc_col='Concepto',
                 window_days=window_days,
-                account_id=pf.get('account_id')
+                account_ids=pf.get('account_ids')
             )
             for p in proposals:
                 p['source_id'] = f"f{file_idx}_{p['source_id']}"
