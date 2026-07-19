@@ -3,6 +3,22 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.9.1.35 - 2026-07-19
+
+Propuesta #8 del `BACKLOG.md`: corrección/mejora visual sin lógica nueva, en la lista de
+propuestas de conciliación (`renderProposalsList()` en `static/script.js`).
+
+- Cada tarjeta de propuesta pasa de la clase genérica `duplicate`/`new` (sin CSS asociado hasta
+  ahora) a `status-<estado>` más `proposal-resolved` (`exact_match`/`reconciled`) o
+  `proposal-attention` (`suggested_match`/`probable_match`/`new`).
+- `static/style.css`: `.proposal-resolved` atenúa la tarjeta (opacidad 0.55, importe sin negrita)
+  -- son un check correcto, ya resuelto, que no necesita atención. `.proposal-attention` se
+  mantiene a plena opacidad y gana un acento de color a la izquierda a juego con su badge (verde
+  para `new`, amarillo para `suggested_match`/`probable_match`) para destacar frente a las
+  atenuadas.
+- `reconciled` se atenúa igual que `exact_match` (no solo lo pedía la propuesta original, pero es
+  conceptualmente el mismo caso: un match ya resuelto por el usuario, sin necesidad de revisión).
+
 ## 0.9.0.33 - 2026-07-19
 
 Nueva funcionalidad visible (Tarea 2 de una sesión de trabajo): aviso de novedades dentro de la

@@ -149,6 +149,16 @@ header { display: flex; justify-content: space-between; align-items: center; mar
 .badge-warning { background: rgba(234, 179, 8, 0.15); color: #facc15; border-color: rgba(234, 179, 8, 0.3); }
 .badge-success { background: rgba(34, 197, 94, 0.15); color: #4ade80; border-color: rgba(34, 197, 94, 0.3); }
 .badge-info { background: rgba(65, 105, 225, 0.15); color: #60a5fa; border-color: rgba(65, 105, 225, 0.3); }
+/* Propuesta #8 (BACKLOG.md): exact_match/reconciled ya son un check correcto -- no necesitan
+   atención del usuario, se atenúan. suggested_match/probable_match/new sí la requieren -- se
+   mantienen a plena opacidad y ganan un acento de color a la izquierda a juego con su badge. */
+.proposal-card { border-left: 3px solid transparent; transition: opacity 0.2s ease, box-shadow 0.2s ease; }
+.proposal-card.proposal-resolved { opacity: 0.55; }
+.proposal-card.proposal-resolved .amount { font-weight: 400; }
+.proposal-card.proposal-resolved:hover { opacity: 0.9; }
+.proposal-card.proposal-attention { border-left-color: rgba(234, 179, 8, 0.6); box-shadow: 0 4px 16px rgba(234, 179, 8, 0.08); }
+.proposal-card.proposal-attention.status-new { border-left-color: rgba(34, 197, 94, 0.6); box-shadow: 0 4px 16px rgba(34, 197, 94, 0.08); }
+
 .category-badge, .subcategory-badge { cursor: pointer; transition: 0.2s; display: inline-block; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .category-badge:hover { background: var(--primary); color: white; }
 .subcategory-badge:hover { background: var(--secondary); color: white; }

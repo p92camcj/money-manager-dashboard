@@ -1156,7 +1156,12 @@ function renderProposalsList() {
             ? `<span class="badge badge-warning" title="No se encontró dentro de las cuentas/tarjetas que marcaste para este fichero -- esta coincidencia viene de otra cuenta de Money Manager. Revísala con más atención antes de confirmar.">⚠️ Fuera de la cuenta esperada</span>`
             : '';
 
-        card.className = `card glass proposal-card ${isDuplicate ? 'duplicate' : 'new'}`;
+        // Propuesta #8 (BACKLOG.md): exact_match/reconciled ya son un check correcto -- se
+        // atenúan (clase proposal-resolved). suggested_match/probable_match/new sí requieren
+        // revisión del usuario -- se mantienen a plena opacidad y ganan un acento de color
+        // (clase proposal-attention + status-<estado> para el matiz, ver style.css).
+        const isResolved = p.status === 'exact_match' || p.status === 'reconciled';
+        card.className = `card glass proposal-card status-${p.status} ${isResolved ? 'proposal-resolved' : 'proposal-attention'}`;
         card.innerHTML = `
             <div class="proposal-header">
                 <strong>${p.date}</strong>

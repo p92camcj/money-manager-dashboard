@@ -4,6 +4,12 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.9.1.35 - 2026-07-19
+
+- En la conciliación bancaria, los movimientos que ya coinciden perfectamente ahora se ven más
+  discretos (no necesitas mirarlos), mientras que los que tienen dudas o son nuevos destacan más,
+  para que sepas de un vistazo a cuáles prestar atención.
+
 ## 0.9.0.33 - 2026-07-19
 
 - Al abrir la aplicación después de una actualización, ahora aparece un aviso con un resumen de

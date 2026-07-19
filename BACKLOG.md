@@ -47,19 +47,6 @@ las opciones más económicas de firma con reputación acumulada tipo SignPath p
 código abierto) eliminaría o reduciría mucho ambos problemas. No se ha hecho en esta tarea por ser
 un coste/proceso externo al código -- queda anotado para valorar si el proyecto gana tracción.
 
-### Propuesta #8: atenuar visualmente los matches exactos, resaltar los que tienen dudas
-
-- **Estado:** pendiente.
-- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
-
-En la tabla/lista de propuestas de conciliación, los registros con `exact_match` deben verse
-"apagados" (menor contraste, más discretos — son un check correcto, no necesitan atención del
-usuario), mientras que `suggested_match`/`probable_match`/`new` deben ser visualmente más
-llamativos, porque son los que requieren revisión manual. Cambio de CSS/render en el frontend
-(probablemente `style.css` + la función que pinta cada propuesta en `script.js`), sin lógica de
-backend nueva — los estados ya existen tal cual en la respuesta de `/api/analyze-excel`, solo
-cambia cómo se representan visualmente.
-
 ### Propuesta #9 / Bug a investigar: confirmar una selección entre varias propuestas de match no persiste igual que un match automático
 
 - **Estado:** pendiente de diagnóstico — no asumir que hace falta rediseñar nada antes de
@@ -131,6 +118,21 @@ resolverlo en el mismo commit que las Propuestas #8, #9 o #10.
 ---
 
 ## Resueltos
+
+### Propuesta #8: atenuar visualmente los matches exactos, resaltar los que tienen dudas
+
+- **Resuelto:** 2026-07-19, versión `0.9.1.35`.
+- **Anotado:** 2026-07-19, a petición del usuario tras usar la conciliación en producción.
+
+Cambio puramente visual, sin lógica de backend nueva (los estados ya venían tal cual en la
+respuesta de `/api/analyze-excel`). `renderProposalsList()` en `static/script.js` asigna ahora
+`status-<estado>` más `proposal-resolved` (`exact_match`/`reconciled`) o `proposal-attention`
+(`suggested_match`/`probable_match`/`new`) a cada tarjeta, en vez de la clase genérica
+`duplicate`/`new` que no tenía ningún CSS asociado. `static/style.css`: `.proposal-resolved`
+atenúa (opacidad 0.55, importe sin negrita); `.proposal-attention` se mantiene a plena opacidad y
+gana un acento de color a la izquierda a juego con su badge. `reconciled` se atenúa igual que
+`exact_match` -- no lo pedía la propuesta literalmente, pero es el mismo caso conceptual (match ya
+resuelto, sin necesidad de revisión).
 
 ### Bug #1: un fallo de conexión con el móvil se presenta como resultado válido
 
