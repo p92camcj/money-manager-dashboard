@@ -44,7 +44,7 @@ _file_handler = RotatingFileHandler(
 _file_handler.setFormatter(_log_formatter)
 logger.addHandler(_file_handler)
 
-from backend.reconciliation import match_bank_transactions, build_mm_dataframe
+from backend.reconciliation import match_bank_transactions, build_mm_dataframe, find_mm_orphans
 from backend.reconciliation_store import make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation
 from backend.bank_statement_parser import parse_bank_statement, parse_bank_date, BankStatementFormatError
 from backend.budget_engine import BudgetEngine
@@ -402,8 +402,39 @@ def analyze_excel():
         status_counts = Counter(p['status'] for p in all_proposals)
         logger.info(f"[analyze-excel] Resultado de conciliación ({len(all_proposals)} filas de {len(parsed_files)} fichero(s), {reconciled_count} ya conciliadas antes): {dict(status_counts)}")
 
+        # Arqueo de caja (Propuesta #11 en BACKLOG.md, ver diseño completo en CLAUDE.md): sentido
+        # contrario al de arriba (MM -> banco). Solo participan los ficheros con account_ids (sin
+        # cuenta asociada no hay un universo delimitado de MM contra el que buscar huérfanos), y
+        # se calcula DESPUÉS de que el bucle anterior haya terminado de mutar `mm_df` para TODOS
+        # los ficheros de la tanda -- un huérfano candidato de un fichero puede resolverse por el
+        # exact_match de OTRO fichero de la misma tanda (p.ej. las dos caras de una transferencia
+        # entre bancos propios). `pf['df']['Fecha']` ya quedó parseada a datetime in situ por
+        # match_bank_transactions() durante ese bucle, así que su min/max ya es directamente
+        # utilizable sin volver a parsear.
+        file_contexts = []
+        for pf in parsed_files:
+            if not pf.get('account_ids'):
+                continue
+            file_dates = pf['df']['Fecha'].dropna()
+            if file_dates.empty:
+                continue
+            file_contexts.append({
+                'label': pf['label'],
+                'filename': pf['filename'],
+                'account_ids': pf['account_ids'],
+                'start_date': file_dates.min(),
+                'end_date': file_dates.max(),
+            })
+        # TODOS los mm_id ya conciliados en el store, no solo los de esta tanda -- una transacción
+        # conciliada hace tiempo cuyo Excel original no se ha vuelto a subir hoy no debe reaparecer
+        # como falso huérfano.
+        excluded_mm_ids = {v['mm_id'] for v in reconciliations.values() if v.get('mm_id')}
+        mm_orphans = find_mm_orphans(mm_df, file_contexts, excluded_mm_ids)
+        logger.info(f"[analyze-excel] Arqueo de caja: {len(mm_orphans)} huérfano(s) de Money Manager en {len(file_contexts)} fichero(s) con cuenta asociada")
+
         return jsonify({
             'proposals': clean_nans(all_proposals),
+            'mm_orphans': clean_nans(mm_orphans),
             'file_errors': file_errors,
         })
     except Exception as e:

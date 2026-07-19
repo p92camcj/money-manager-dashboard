@@ -256,3 +256,82 @@ def match_bank_transactions(excel_df, mm_df, date_col, amount_col, desc_col, win
         })
 
     return results
+
+
+def find_mm_orphans(mm_df, file_contexts, excluded_mm_ids=None):
+    """Arqueo de caja (Propuesta #11 en BACKLOG.md): localiza transacciones de Money Manager que
+    ninguna fila del banco (de NINGÚN fichero de la tanda) consumió como `exact_match`, y que
+    tampoco estén ya conciliadas de una sesión anterior. Ver diseño completo en CLAUDE.md, sección
+    "Arqueo de caja: huérfanos de Money Manager sin equivalente en el extracto".
+
+    mm_df: el DataFrame COMPARTIDO ya mutado por TODAS las llamadas a match_bank_transactions() de
+        la tanda (matched_origin/matched_destination reflejan el resultado final).
+    file_contexts: lista de dicts, uno por fichero de la tanda CON account_ids asociado (los que
+        no tengan account_ids no delimitan un universo y no deben incluirse aquí), con las claves
+        `label`, `filename`, `account_ids` (lista), `start_date`/`end_date` (pd.Timestamp — el
+        rango real de fechas de ESE fichero, no el rango combinado de la tanda).
+    excluded_mm_ids: ids (cualquier tipo, se comparan como str) de transacciones de MM a excluir
+        SIEMPRE, sea cual sea el contexto — pensado para pasar TODOS los mm_id ya presentes en
+        data/reconciliations.json, no solo los de conciliaciones recalculadas en esta petición.
+
+    Cada huérfano se atribuye al PRIMER fichero (en el orden de `file_contexts`) cuyo
+    account_ids+periodo lo cubre, para no duplicarlo si dos ficheros de la tanda comparten cuenta
+    y periodo solapado."""
+    if mm_df.empty:
+        return []
+
+    excluded = {str(x) for x in (excluded_mm_ids or ())}
+    emitted_ids = set()
+    orphans = []
+
+    for ctx in file_contexts:
+        account_ids_set = {str(a) for a in ctx['account_ids']}
+        start, end = ctx['start_date'], ctx['end_date']
+        if pd.isna(start) or pd.isna(end):
+            continue
+
+        in_period = (mm_df['mbDate'] >= start) & (mm_df['mbDate'] <= end)
+        is_origin_side = mm_df['assetId'].astype(str).isin(account_ids_set)
+        is_dest_side = mm_df['is_transfer'] & mm_df['destAssetId'].astype(str).isin(account_ids_set)
+        universe = mm_df[in_period & (is_origin_side | is_dest_side)]
+
+        for _, row in universe.iterrows():
+            mm_id = row.get('id')
+            if mm_id is None or (isinstance(mm_id, float) and pd.isna(mm_id)):
+                continue
+            mm_id = str(mm_id)
+            if mm_id in emitted_ids or mm_id in excluded:
+                continue
+
+            is_transfer_row = bool(row['is_transfer'])
+            transfer_side = None
+            if is_transfer_row:
+                if str(row['assetId']) in account_ids_set:
+                    transfer_side = 'origen'
+                    covered = bool(row['matched_origin'])
+                else:
+                    transfer_side = 'destino'
+                    covered = bool(row['matched_destination'])
+            else:
+                covered = bool(row['matched_origin'])
+
+            if covered:
+                continue
+
+            emitted_ids.add(mm_id)
+            category = row.get('mbCategory')
+            orphans.append({
+                'id': row.get('id'),
+                'date': row['mbDate'].strftime('%Y-%m-%d') if pd.notnull(row['mbDate']) else None,
+                'amount': float(row['mbCash']) if not pd.isna(row['mbCash']) else 0.0,
+                'description': str(row.get('mbContent', '')),
+                'category': str(category) if category not in (None, 'None') and not (isinstance(category, float) and pd.isna(category)) else '',
+                'asset_id': str(row.get('assetId', '')),
+                'dest_asset_id': str(row.get('destAssetId', '')) if is_transfer_row else None,
+                'is_transfer': is_transfer_row,
+                'transfer_side': transfer_side,
+                'source_label': ctx['label'],
+                'source_filename': ctx['filename'],
+            })
+
+    return orphans
