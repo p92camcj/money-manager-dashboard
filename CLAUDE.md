@@ -619,6 +619,88 @@ extraer el relleno de campos de `editTransaction()` a una función aparte,
   `Math.max(...)` de recuperación, pensado solo para altas nuevas). Corregido capturando
   `currentEditingId` en una constante local (`wasEditingId`) antes de `closeModal()`.
 
+## Arqueo de caja: huérfanos de Money Manager sin equivalente en el extracto (Propuesta #11)
+
+Hasta ahora la conciliación solo resolvía un sentido: banco → MM (por cada fila del extracto,
+¿qué transacción de Money Manager le corresponde?). Esta sección añade el sentido contrario: MM →
+banco. Dentro de la cuenta (o cuentas/tarjetas) y el periodo de un fichero subido, ¿qué
+transacciones de Money Manager NO tienen ninguna fila del banco que las cubra? Diseño decidido
+antes de tocar código, tal y como pedía esta propuesta en `BACKLOG.md`:
+
+- **Solo participan los ficheros con `account_ids`.** Sin cuenta asociada no hay un universo
+  acotado de transacciones de MM contra el que buscar huérfanos — ese fichero sigue funcionando
+  exactamente igual que hoy para su propio matching banco→MM, simplemente no aporta huérfanos.
+- **Universo por fichero: sus propias `account_ids`, en su propio rango de fechas real** (el
+  `min`/`max` de la columna `Fecha` YA parseada de ESE fichero, no el rango combinado con el
+  margen de ±15 días que usa `/api/analyze-excel` para consultar `getDataByPeriod` a la vez para
+  toda la tanda). El rango combinado existe solo para minimizar llamadas al móvil; el arqueo de
+  caja tiene que juzgar cada extracto contra el periodo que ese extracto realmente cubre, no
+  contra un rango más ancho que mezclaría fichero de otro banco/cuenta.
+- **Reutiliza `build_mm_dataframe()` — no hace falta ampliarlo.** El DataFrame que ya construye
+  para la tanda (una consulta a `getDataByPeriod` por rango combinado, columnas `assetId`/
+  `destAssetId`/`is_transfer`/`matched_origin`/`matched_destination`/`mbDate`/`mbCash`, más
+  cualquier campo crudo del XML como `mbContent`/`mbCategory`) ya es exactamente el universo
+  completo de transacciones de MM que hace falta — el huérfano no es más que "una fila de ese
+  mismo DataFrame que nadie reclamó".
+- **Se calcula DESPUÉS del bucle de matching de todos los ficheros de la tanda, no fichero a
+  fichero.** `mm_df` se comparte y se muta en el sitio durante ese bucle (`matched_origin`/
+  `matched_destination`, ver "Matching compartido entre ficheros de la misma tanda" más arriba);
+  calcular huérfanos solo tiene sentido con el resultado FINAL de esas columnas, para que un
+  huérfano candidato de un fichero pueda resolverse por el `exact_match` de OTRO fichero de la
+  misma tanda (p.ej. las dos caras de una transferencia entre bancos propios).
+- **"Consumida" significa únicamente dos cosas — ni una más:**
+  1. `matched_origin`/`matched_destination` a `True` en `mm_df` tras el bucle de matching de la
+     tanda (un `exact_match` de cualquier fichero la reclamó). Para una transacción normal
+     (no transferencia) se mira `matched_origin`; para una transferencia, `matched_origin` si la
+     cuenta del contexto es el origen (`assetId`) o `matched_destination` si es el destino
+     (`destAssetId`) — el mismo criterio de lado que ya usa `match_bank_transactions()`.
+  2. Su `id` real está en `data/reconciliations.json` (cualquier entrada, no solo las que tengan
+     una fila del banco presente en ESTA tanda) — así una transacción conciliada hace tiempo, cuyo
+     Excel original no se ha vuelto a subir hoy, no reaparece como falso huérfano. Por eso el
+     conjunto de exclusión se construye con **todos** los `mm_id` del store (`{v['mm_id'] for v in
+     reconciliations.values()}`), no solo los de las conciliaciones que se acaban de recalcular en
+     esta petición.
+  - **Deliberadamente NO cuenta como "consumida"** una transacción que solo aparece como
+    `candidate` dentro de un `suggested_match`/`probable_match` sin confirmar — es ambigua, no
+    resuelta; hasta que el usuario la confirme (que la mete en el store, punto 2) sigue siendo un
+    huérfano legítimo. Consecuencia aceptada: la misma transacción de MM puede verse a la vez como
+    candidato de una propuesta ambigua Y como huérfano en la misma respuesta — no es un bug, es
+    literalmente "todavía sin resolver" visto desde los dos sentidos.
+- **Transferencias con un solo lado presente en la tanda**: si `account_ids` de un fichero cubre
+  el lado origen de una transferencia real (p.ej. Cajasur→Revolut) pero el extracto del banco
+  destino no se subió en esta tanda (o esa fila concreta no hizo `exact_match` por lo que sea),
+  esa transacción aparece como huérfana por ese lado — **no se excluye ni se trata como error**,
+  es información real y útil ("esta transferencia sale de esta cuenta pero no se ha podido
+  verificar contra el otro banco en esta sesión"). Cada huérfano de transferencia lleva
+  `transfer_side` (`'origen'`/`'destino'`) según cuál cuenta del contexto lo cubre.
+- **Deduplicación entre ficheros de la misma tanda**: si dos ficheros comparten cuenta y periodo
+  solapado, la misma transacción de MM podría calificar como huérfano en el universo de ambos —
+  se atribuye al PRIMER fichero (orden de subida) que la cubre, y no se repite en el segundo.
+- **Formato de salida — lista nueva `mm_orphans`, separada de `proposals`, no un estado más
+  dentro de `proposals`.** Se decidió así porque conceptualmente van en el sentido contrario
+  (MM → banco, no banco → MM): no tienen fila de banco de origen (`source_id`/fila del Excel), su
+  "descripción"/"importe"/"fecha" son los de Money Manager, no los del extracto, y mezclarlas en
+  la misma lista que `exact_match`/`suggested_match`/`new` obligaría al frontend a distinguir por
+  tipo en cada sitio que ya itera `proposals`. Cada elemento de `mm_orphans`: `id` (id real de MM),
+  `date`, `amount`, `description` (`mbContent`), `category` (`mbCategory`), `asset_id`,
+  `dest_asset_id` (solo si `is_transfer`), `is_transfer`, `transfer_side`, `source_label`/
+  `source_filename` (el fichero cuyo contexto de cuenta+periodo lo cubrió).
+- **Implementación**: `backend/reconciliation.py::find_mm_orphans(mm_df, file_contexts,
+  excluded_mm_ids)` — función nueva, reutilizable y testeable aparte del resto de
+  `match_bank_transactions()`. `app.py::analyze_excel()` construye `file_contexts` (solo ficheros
+  con `account_ids`, con su rango de fechas real ya parseado por `match_bank_transactions()` sobre
+  el propio `pf['df']` in situ) y `excluded_mm_ids` (todo el store) después del bucle de matching,
+  y añade `mm_orphans` a la respuesta JSON junto a `proposals`.
+- **Frontend**: sección nueva y visualmente separada bajo "Movimientos en Money Manager sin
+  equivalente en el extracto" (`#mmOrphansSection` en `index.html`, `renderMmOrphansList()` en
+  `script.js`) — no una tarjeta más en `#proposalsList`, para que no se lea como "falta hacer algo
+  del mismo tipo" que un `new`/`suggested_match`. Barra de resumen nueva
+  (`#reconciliationSummaryBar`, `renderReconciliationSummary()`) con cuatro cifras de un vistazo:
+  cuadran (`exact_match`+`reconciled`), por revisar (`suggested_match`+`probable_match`), solo en
+  el banco (`new`), solo en Money Manager (`mm_orphans.length`). "Ver Registro" de un huérfano
+  reutiliza `viewAssociatedRecord()` (Propuesta #10) tal cual, ya que un huérfano ya trae el `id`
+  real de MM.
+
 ## Aviso de conexión perdida con el móvil
 
 **Resuelto 2026-07-19 (Bug #1 de `BACKLOG.md`).** Antes, un fallo de conexión con el móvil a
