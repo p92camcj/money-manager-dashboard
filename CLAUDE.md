@@ -637,6 +637,26 @@ y se muestra en el footer del frontend.
 Cada tarea cerrada con cambios de código añade una entrada a `CHANGELOG.md` con versión, fecha y
 qué cambió, y su propio commit (no se amontonan varias tareas en un commit).
 
+**⚠️ Subir `VERSION` implica SIEMPRE crear y pushear el tag `vX.Y.Z.W` en el mismo cierre de
+tarea — no es un paso aparte que haya que pedir por separado.** Detectado el 2026-07-19: dos
+commits (`9d44952` v0.8.2.29, `20f3088` v0.8.3.30) subieron `VERSION` y se pushearon sin su tag
+correspondiente, y como el workflow de `.github/workflows/build-release.yml` **solo** se dispara
+con el push de un tag `v*` (ver "Distribución con ejecutable de Windows" más abajo), ambas
+versiones quedaron silenciosamente sin `.exe` publicado — nadie en la vía `.exe` (Propuesta #6)
+recibió esos fixes hasta que se detectó el hueco y se crearon los tags a posteriori. El commit en
+sí NUNCA dispara la build; solo el tag lo hace. Por tanto, para cualquier cambio que suba
+`VERSION` y deba llegar a los usuarios del `.exe`:
+
+1. Commit con el bump de versión (como ya se hacía).
+2. `git tag vX.Y.Z.W <commit>` + `git push origin vX.Y.Z.W` — en el mismo cierre de tarea, no
+   como seguimiento posterior.
+3. Verificar que el workflow terminó en verde y que el Release quedó publicado con el `.exe`
+   adjunto (`gh run list` / `gh release list`) — no dar la tarea por cerrada solo porque el push
+   del tag no dio error; hay que comprobar que la build realmente completó.
+
+Esto se da por incluido en cualquier cierre de tarea con bump de versión, salvo que el usuario
+diga explícitamente lo contrario (p. ej. "commitea esto pero no lo publiques todavía").
+
 ## Seguimiento de bugs y propuestas: `BACKLOG.md`
 
 Los bugs detectados que no se arreglan en el momento, y las propuestas de mejora que surgen en
