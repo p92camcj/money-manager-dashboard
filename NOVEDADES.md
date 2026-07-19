@@ -4,6 +4,11 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.11.1.42 - 2026-07-20
+
+- Arreglado: al abrir por primera vez el detalle de una transacción en una sesión, a veces la
+  subcategoría aparecía vacía aunque la transacción sí tuviera una guardada. Ya carga bien siempre.
+
 ## 0.11.0.41 - 2026-07-20
 
 - Nuevo "arqueo de caja" en Conciliación: además de comparar el extracto del banco contra Money

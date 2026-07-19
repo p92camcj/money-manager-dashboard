@@ -641,6 +641,15 @@ function populateEditFormFromTransaction(t) {
     } else {
         if (t.assetId) document.getElementById('editAccount').value = t.assetId;
         if (t.mbCategory) document.getElementById('editCategory').value = t.mbCategory;
+        // Minibug (BACKLOG.md, 2026-07-20): updateModalCategories() ya llamó a
+        // updateModalSubCategories() más arriba, pero en ese momento editCategory.value todavía
+        // tenía la categoría PREVIA (o ninguna, en la primera apertura de la sesión) -- el
+        // <select> de subcategoría quedaba poblado para esa categoría antigua, no para
+        // t.mbCategory, que se acaba de fijar en la línea de arriba. Asignar editSubCategory.value
+        // directamente después no seleccionaba nada (un <select> ignora en silencio un value que
+        // no coincide con ninguna de sus <option>): la subcategoría se veía vacía. Recalcular aquí,
+        // ya con la categoría correcta, antes de fijar el valor de subcategoría.
+        updateModalSubCategories();
         if (t.subCategory) document.getElementById('editSubCategory').value = t.subCategory;
     }
 }

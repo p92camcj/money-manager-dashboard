@@ -3,6 +3,27 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.11.1.42 - 2026-07-20
+
+Minibug: la subcategoría no cargaba la primera vez que se abría el modal de detalle/edición de
+una transacción (sí la segunda). Diagnóstico por trazado de código, no por caché de
+`fetchCategoryMap()` (hipótesis inicial razonable pero descartada -- ese mapa solo se usa para
+`mcid`/`mcscid` al guardar, no para poblar el `<select>` de subcategoría): en
+`populateEditFormFromTransaction()` (`static/script.js`), `updateModalCategories()` (que a su vez
+llama a `updateModalSubCategories()`) se ejecutaba ANTES de fijar `editCategory.value = t.mbCategory`
+-- el `<select>` de subcategoría quedaba poblado para la categoría que hubiera antes (o ninguna,
+en la primera apertura de la sesión), no para la de la transacción que se estaba abriendo. Asignar
+`editSubCategory.value = t.subCategory` justo después no seleccionaba nada, porque un `<select>`
+ignora en silencio un `value` que no coincide con ninguna de sus `<option>` -- ahí queda,
+visualmente, la subcategoría en blanco. Que la segunda vez SÍ funcionara era casualidad: al
+reabrir el modal, `updateModalCategories()` restaura `prevCat` (la categoría que quedó fijada tras
+la apertura anterior, que si era la misma transacción coincidía con la real) y por eso
+`updateModalSubCategories()` se ejecutaba ya con la categoría correcta.
+
+Fix: llamar a `updateModalSubCategories()` explícitamente justo después de fijar
+`editCategory.value`, antes de asignar `editSubCategory.value` -- válido siempre, no depende de lo
+que hubiera seleccionado en una apertura anterior del modal.
+
 ## 0.11.0.41 - 2026-07-20
 
 Propuesta #11 del `BACKLOG.md` (arqueo de caja): la conciliación resolvía solo un sentido
