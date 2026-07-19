@@ -1,0 +1,42 @@
+# Bloque 4 de la Propuesta #6 (ver BACKLOG.md y CLAUDE.md, sección "Distribución con ejecutable
+# de Windows"). Compila el .exe de la distribución "amigable" y lo publica como asset de un
+# GitHub Release cuando se sube un tag de versión.
+#
+# Disparador: push de un tag "v*" (p.ej. v0.8.0.25) -- el más simple de mantener (no depende de
+# proteger ninguna rama ni de aprobar manualmente un workflow) y encaja de forma natural con el
+# propio formato de versión X.Y.Z.W ya usado en VERSION.
+#
+# Solo windows-latest: esta vía de distribución es exclusivamente para Windows (ver CLAUDE.md).
+name: Build Windows executable
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-desktop.txt
+
+      - name: Compilar el .exe
+        run: pyinstaller build_exe.spec --noconfirm
+
+      - name: Publicar Release con el .exe adjunto
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/MoneyManagerDashboard.exe
+          generate_release_notes: true
