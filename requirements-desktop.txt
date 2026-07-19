@@ -4,3 +4,4 @@
 # de la vía técnica no necesita instalar pywebview/WebView2 ni PyInstaller para nada.
 -r requirements.txt
 pyinstaller
+pywebview

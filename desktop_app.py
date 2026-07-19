@@ -3,32 +3,57 @@ en BACKLOG.md y CLAUDE.md, sección "Distribución con ejecutable de Windows"). 
 técnica (`python app.py` / `launch.py`) -- esta es una segunda vía de arranque para el .exe, que
 convive con la anterior sin sustituirla.
 
-Bloque 1 (empaquetado): arranca Flask en un hilo de fondo (host 127.0.0.1 -- la única visita es
-la del propio navegador local, no hace falta exponerlo a la LAN como sí hace `launch.py` con host
-0.0.0.0) y abre el navegador por defecto del sistema, igual que `launch.py`. El Bloque 2 sustituye
-esto por una ventana propia de escritorio (pywebview) en vez del navegador.
+Bloque 2 (ventana nativa): arranca Flask en un hilo de fondo (host 127.0.0.1 -- el único cliente
+es la propia ventana local, no hace falta exponerlo a la LAN como sí hace `launch.py` con host
+0.0.0.0) y muestra el dashboard en una ventana propia de escritorio con pywebview (motor WebView2,
+de serie en Windows 10/11) en vez de abrir el navegador por defecto del sistema (Bloque 1).
 """
 import threading
 import time
-import webbrowser
+
+import requests
+import webview
 
 from app import app
 
 DASHBOARD_URL = "http://127.0.0.1:5000"
+SERVER_READY_TIMEOUT = 15
 
 
 def _run_flask():
+    # threaded=True: la UI hace varias peticiones a la vez (carga inicial, proxy al móvil,
+    # conciliación...) y el servidor de desarrollo de Flask solo atiende una a la vez si no.
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True, use_reloader=False)
 
 
-def _open_browser_delayed():
-    time.sleep(1.5)
-    webbrowser.open(DASHBOARD_URL)
+def _wait_for_server(timeout=SERVER_READY_TIMEOUT):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            requests.get(DASHBOARD_URL, timeout=1)
+            return True
+        except requests.exceptions.RequestException:
+            time.sleep(0.2)
+    return False
 
 
 def main():
-    threading.Thread(target=_open_browser_delayed, daemon=True).start()
-    _run_flask()
+    threading.Thread(target=_run_flask, daemon=True).start()
+    _wait_for_server()
+
+    # Decisión de diseño (ver CLAUDE.md): ventana con el marco por defecto de pywebview (sin
+    # frameless=True) -- pywebview no ofrece en su API pública un modo intermedio real de "solo
+    # ocultar la barra de título pero conservar los botones de sistema", y el marco por defecto ya
+    # cumple el objetivo real (que no lo parezca un navegador): WebView2 no dibuja barra de
+    # direcciones, pestañas ni marcadores.
+    webview.create_window(
+        "Money Manager Dashboard",
+        DASHBOARD_URL,
+        width=1280,
+        height=860,
+        min_size=(900, 600),
+    )
+    webview.start()
 
 
 if __name__ == "__main__":
