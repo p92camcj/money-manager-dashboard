@@ -3,6 +3,37 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.12.2.46 - 2026-07-20
+
+Bug real en el modo de enlace manual (Propuesta #13), detectado por el usuario probándolo en
+persona tras la verificación en vivo de la sesión anterior: al elegir un movimiento del banco, un
+huérfano de Money Manager que veía perfectamente desaparecía de la lista -- por diseño solo debía
+REORDENARSE por cercanía de importe, nunca desaparecer.
+
+**Diagnóstico**: no había ningún filtro (se comprobó a fondo, `renderManualLinkSection()` no
+aplica ningún `.filter()` a `orphanItems`) -- el problema era que el ORDEN por cercanía de importe
+estaba roto. `mm_orphans[].amount` no lleva un convenio de signo consistente en los datos reales de
+Money Manager (algunas filas vienen en positivo, otras en negativo para el mismo tipo de
+movimiento -- confirmado contra datos reales, no una suposición), mientras que el importe del
+banco siempre lleva el signo real del extracto. Comparar ambos tal cual (`a.amount -
+selectedBank.amount`) daba la distancia MÁS GRANDE posible justo para las coincidencias reales
+(p.ej. un huérfano de Amazon de +14,70€ contra un cargo de banco de -14,70€, la misma compra),
+hundiéndolas en mitad de una lista de 34 huérfanos en vez de arriba -- con un scroll de solo
+~6-7 filas visibles a la vez, esto se percibía exactamente como "el huérfano desapareció".
+
+**Fix**: `renderManualLinkSection()` (`static/script.js`) compara ahora por MAGNITUD absoluta en
+ambos lados (`Math.abs(Math.abs(a.amount) - Math.abs(selectedBank.amount))`), tanto para el orden
+como para el badge "💡 Importe parecido" -- correcto independientemente del convenio de signo de
+cada lado.
+
+**Verificado en vivo contra el móvil real** (no solo por trazado de código, tal y como pidió el
+usuario): con el mismo extracto real de `samples/` usado en la verificación anterior, se comprobó
+que el número de huérfanos visibles (34) y la presencia de "Amazon Chuches Reena" se mantienen
+exactamente iguales al seleccionar CUALQUIERA de los movimientos del banco disponibles (antes del
+fix esto ya se sospechaba correcto por el propio código -- lo que fallaba era la posición). Tras el
+fix, un huérfano con importe real e idéntico en magnitud al del banco seleccionado pasó de la
+posición 10 de 34 a la posición 3 de 34 -- dentro del scroll visible sin buscar.
+
 ## 0.12.1.44 - 2026-07-20
 
 Propuesta #13 del `BACKLOG.md`: modo de enlace manual banco ↔ Money Manager para casos que el

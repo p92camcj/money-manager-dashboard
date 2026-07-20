@@ -51,6 +51,30 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Bug #6: en el modo de enlace manual, un huérfano de MM "desaparecía" al elegir un movimiento del banco
+
+- **Resuelto:** 2026-07-20, versión `0.12.2.46`.
+- **Detectado:** 2026-07-20, por el usuario probando en persona la Propuesta #13 tras su
+  verificación en vivo en la sesión anterior.
+
+Por diseño, seleccionar un movimiento del banco en el modo de enlace manual solo debía REORDENAR
+los huérfanos de Money Manager por cercanía de importe (con badge "💡 Importe parecido" para los
+que coinciden hasta el céntimo) -- nunca ocultar ninguno. El usuario reportó que un huérfano real
+(Amazon Chuches Reena) desaparecía al elegir cierto movimiento del banco.
+
+**Diagnóstico**: no había ningún filtro -- `renderManualLinkSection()` nunca aplica `.filter()` a
+`orphanItems`. El problema real era que el ORDEN estaba roto: `mm_orphans[].amount` no lleva un
+convenio de signo consistente en los datos reales de Money Manager (confirmado contra datos
+reales: algunas filas positivas, otras negativas, para el mismo tipo de movimiento), mientras que
+el importe del banco sí lleva su signo real. Comparar ambos tal cual daba la distancia MÁS GRANDE
+posible justo para las coincidencias reales (p.ej. huérfano +14,70€ contra cargo de banco
+-14,70€, la misma compra), hundiéndolas en mitad de una lista de 34 con solo ~6-7 filas visibles a
+la vez -- indistinguible de haber desaparecido.
+
+**Fix**: comparar por magnitud absoluta en ambos lados. Verificado en vivo contra el móvil real:
+34 huérfanos visibles sin cambios al seleccionar cualquier movimiento del banco, y un huérfano real
+pasó de la posición 10 de 34 a la 3 de 34 tras el fix. Detalle completo en `CHANGELOG.md`.
+
 ### Propuesta #13: modo de enlace manual banco ↔ Money Manager (huérfanos)
 
 - **Resuelto:** 2026-07-20, versión `0.12.1.44`.

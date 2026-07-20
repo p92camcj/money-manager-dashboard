@@ -1479,10 +1479,20 @@ function renderManualLinkSection() {
 
     // Mejora de usabilidad sugerida en la propuesta: con un movimiento del banco seleccionado,
     // ordena los huérfanos de MM por cercanía de importe en vez de dejarlos solo por fecha -- no
-    // obliga a buscar a ojo en una lista larga.
+    // obliga a buscar a ojo en una lista larga. Bug real (BACKLOG.md): comparar los importes
+    // directamente (con signo) estaba roto porque `mm_orphans[].amount` no lleva un convenio de
+    // signo consistente en los datos reales de Money Manager (algunas filas vienen en positivo,
+    // otras en negativo, para el mismo tipo de movimiento -- confirmado contra datos reales), a
+    // diferencia del importe del banco, que siempre lleva el signo real del extracto. Comparar
+    // ambos tal cual daba la MAYOR distancia posible justo para las coincidencias reales (p.ej.
+    // un huérfano de +14,70€ contra un cargo de banco de -14,70€, la misma compra), hundiéndolas
+    // en mitad de la lista en vez de arriba -- con solo ~6-7 filas visibles a la vez (scroll de
+    // 320px), esto se percibía como que el huérfano "desaparecía". Comparar por MAGNITUD absoluta
+    // en ambos lados es correcto independientemente del convenio de signo de cada uno.
     let orphanItems = (lastOrphans || []).slice();
     if (selectedBank) {
-        orphanItems.sort((a, b) => Math.abs(a.amount - selectedBank.amount) - Math.abs(b.amount - selectedBank.amount));
+        const bankMagnitude = Math.abs(selectedBank.amount);
+        orphanItems.sort((a, b) => Math.abs(Math.abs(a.amount) - bankMagnitude) - Math.abs(Math.abs(b.amount) - bankMagnitude));
     } else {
         orphanItems.sort((a, b) => new Date(b.date) - new Date(a.date));
     }
@@ -1499,7 +1509,7 @@ function renderManualLinkSection() {
     `).join('') : '<p class="text-muted" style="padding:10px;">No hay movimientos del banco sin match en esta tanda.</p>';
 
     orphanList.innerHTML = orphanItems.length ? orphanItems.map(o => {
-        const closeAmount = !!(selectedBank && Math.abs(o.amount - selectedBank.amount) < 0.01);
+        const closeAmount = !!(selectedBank && Math.abs(Math.abs(o.amount) - Math.abs(selectedBank.amount)) < 0.01);
         return `
         <label class="manual-link-row ${manualLinkSelectedOrphanId === o.id ? 'manual-link-row-selected' : ''} ${closeAmount ? 'manual-link-row-suggested' : ''}">
             <input type="radio" name="manualLinkOrphan" value="${o.id}" ${manualLinkSelectedOrphanId === o.id ? 'checked' : ''} onchange="selectManualLinkOrphan('${o.id}')">
