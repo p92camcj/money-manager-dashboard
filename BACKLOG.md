@@ -51,6 +51,26 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Bug #7: al confirmar un enlace manual, el movimiento del banco no desaparecía de la lista
+
+- **Resuelto:** 2026-07-20, versión `0.13.4.51`.
+- **Detectado:** 2026-07-20, caso real reportado por el usuario (enlace entre un cargo de Amazon
+  de -14,70€ y "Amazon Chuches Reena").
+
+Diagnóstico primero, con datos reales, sin asumir la causa -- las dos hipótesis de código que se
+pidió revisar (referencia de objeto ambigua en `confirmManualLink()`, falta de re-render del lado
+izquierdo) se descartaron con pruebas en vivo contra el móvil real: `source_id` identifica cada
+fila de forma única (nunca hay ambigüedad de referencia), y `renderManualLinkSection()` sí se
+vuelve a llamar y sí recalcula `bankItems` en fresco tras confirmar -- verificado que con un par
+limpio, sin ambigüedad, la fila desaparece correctamente. La causa real, confirmada con datos 100%
+reales de `samples/`: un extracto bancario real puede tener más de una línea con la misma fecha,
+importe y descripción ("COMPRA T.C. CARL.S JR PLAZA MAYOR" y "COMPRA T.C. GELATOMARE S.L."
+aparecen cada una dos veces en el mismo extracto real) -- el mecanismo ya elimina la fila correcta,
+pero sin nada que distinga visualmente las dos filas, la gemela que queda parece "la que no
+desapareció". Fix: badge "🔢 N/total" quede visible SOLO cuando hay más de una fila con los mismos
+datos, calculado en `computeDuplicateOrdinals()`. Verificado en vivo contra el móvil real. Detalle
+completo en `CHANGELOG.md`.
+
 ### Propuesta #18: icono propio del .exe (temática de dinero/finanzas)
 
 - **Resuelto:** 2026-07-20, versión `0.13.3.50`.

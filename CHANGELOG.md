@@ -3,6 +3,42 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.13.4.51 - 2026-07-20
+
+Bug (Bug #7 del `BACKLOG.md`): al confirmar un enlace manual, el huérfano de MM (columna derecha)
+desaparecía correctamente, pero el movimiento del banco (columna izquierda, `status: 'new'`) NO
+desaparecía de la lista. Caso real reportado: enlace entre el cargo de Amazon de -14,70€ (banco) y
+"Amazon Chuches Reena" (Money Manager).
+
+**Diagnóstico primero, con datos reales, siguiendo el guion pedido -- ninguna de las dos hipótesis
+de código se confirmó:**
+1. `confirmManualLink()` identifica la fila del banco por `bankProposal =
+   lastProposals.find(p => p.source_id === manualLinkSelectedBankSourceId)` -- por `source_id`
+   real y único (nunca por fecha/importe/descripción), así que no hay ambigüedad de referencia de
+   objeto posible ahí.
+2. `renderManualLinkSection()` SÍ se vuelve a llamar tras confirmar y SÍ recalcula `bankItems =
+   lastProposals.filter(p => p.status === 'new')` en fresco -- verificado en vivo contra el móvil
+   real con un par limpio (sin ambigüedad): la fila desaparece del DOM correctamente, `status`
+   pasa a `'reconciled'` y el recuento de `'new'` baja en 1, exactamente como debía.
+3. La causa real es la que el propio usuario ya sospechaba: **un extracto bancario real puede
+   tener más de una línea con la misma fecha/importe/descripción** -- no es un caso raro (dos
+   compras idénticas el mismo día en el mismo comercio). Confirmado con datos 100% reales de
+   `samples/casa_julio_250626-180726.xls`: "COMPRA T.C. CARL.S JR PLAZA MAYOR" y "COMPRA T.C.
+   GELATOMARE S.L." aparecen cada una dos veces, mismo importe, mismo día. El mecanismo ya
+   identifica y elimina la fila correcta por `source_id` (nunca la equivocada), pero al ojo humano,
+   sin nada que distinga las dos filas, la gemela que queda parece "la misma que no desapareció".
+
+**Fix**: `computeDuplicateOrdinals()` en `static/script.js` calcula un ordinal (p.ej. "1/2", "2/2")
+para cada grupo de filas -- del banco o de MM -- que comparten fecha/importe/descripción (y
+categoría, en el caso de MM), y `renderManualLinkSection()` lo muestra como badge "🔢 N/total" SOLO
+cuando hay más de una. No cambia nada del comportamiento de selección/confirmación (que ya era
+correcto) -- solo hace visible una ambigüedad que ya existía en los datos.
+
+**Verificado en vivo contra el móvil real**: con una tanda que fuerza el caso (dos copias del mismo
+extracto en la misma subida), el badge aparece en ambas filas duplicadas ("1/2"/"2/2"); al confirmar
+una, desaparece exactamente esa (identificada por `source_id`, no por texto) y la fila gemela que
+queda pierde el badge (el grupo se reduce a 1). Cero errores de consola.
+
 ## 0.13.3.50 - 2026-07-20
 
 Propuesta #18 del `BACKLOG.md`: icono propio para el `.exe`, con temática de dinero/finanzas en

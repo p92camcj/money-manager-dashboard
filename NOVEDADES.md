@@ -4,6 +4,12 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.13.4.51 - 2026-07-20
+
+- Arreglado en "Enlazar manualmente": si el banco tenía dos movimientos idénticos (misma fecha,
+  importe y concepto -- p.ej. dos compras iguales el mismo día), ahora se marcan con un
+  distintivo "1/2"/"2/2" para que sepas cuál es cuál al confirmar uno de los dos.
+
 ## 0.13.3.50 - 2026-07-20
 
 - Nuevo icono para la versión de escritorio (.exe): una moneda con gráfico de barras, en vez del

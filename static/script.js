@@ -1548,6 +1548,28 @@ function selectManualLinkOrphan(orphanId) {
 // renderMmOrphansList()) -- el caso motivador (Amazon) es precisamente uno donde el cargo del
 // banco y su contrapartida en Money Manager pueden venir de ficheros/etiquetas distintas, así que
 // limitar por etiqueta activa iría en contra del propio propósito de este modo.
+// Bug real (BACKLOG.md): con un extracto bancario real puede haber más de un movimiento con la
+// MISMA fecha/importe/descripción -- dos compras idénticas el mismo día en el mismo comercio no
+// son un caso raro (confirmado con datos reales de samples/: "COMPRA T.C. CARL.S JR PLAZA MAYOR"
+// y "COMPRA T.C. GELATOMARE S.L." aparecen dos veces cada una, mismo importe, mismo día, en un
+// único extracto real). El mecanismo de confirmManualLink()/renderManualLinkSection() identifica
+// cada fila por su `source_id`/`id` real (nunca por fecha/importe/descripción), así que confirmar
+// una de dos filas idénticas SÍ quita solo esa -- pero al ojo humano, sin nada que las distinga,
+// la fila gemela que queda parece "la misma que no desapareció". Se calcula un ordinal (p.ej.
+// "1/2", "2/2") para cada grupo de filas con la misma fecha/importe/descripción visible, y se
+// muestra como badge SOLO cuando hay más de una -- no cambia nada del comportamiento, solo hace
+// visible una ambigüedad que ya existía en los datos.
+function computeDuplicateOrdinals(items, keyFn) {
+    const counts = {};
+    items.forEach(it => { const k = keyFn(it); counts[k] = (counts[k] || 0) + 1; });
+    const seen = {};
+    return items.map(it => {
+        const k = keyFn(it);
+        seen[k] = (seen[k] || 0) + 1;
+        return counts[k] > 1 ? { ordinal: seen[k], total: counts[k] } : null;
+    });
+}
+
 function renderManualLinkSection() {
     if (!manualLinkMode) return;
     const bankList = document.getElementById('manualLinkBankList');
@@ -1577,24 +1599,37 @@ function renderManualLinkSection() {
         orphanItems.sort((a, b) => new Date(b.date) - new Date(a.date));
     }
 
-    bankList.innerHTML = bankItems.length ? bankItems.map(p => `
+    const bankOrdinals = computeDuplicateOrdinals(bankItems, p => `${p.date}|${p.amount}|${(p.description || '').trim()}`);
+    bankList.innerHTML = bankItems.length ? bankItems.map((p, idx) => {
+        const dup = bankOrdinals[idx];
+        const dupTag = dup
+            ? `<span class="badge badge-warning" style="font-size:0.7rem;" title="Hay ${dup.total} movimientos del banco con esta misma fecha, importe y descripción -- revisa cuál es cuál antes de confirmar (p.ej. dos compras idénticas el mismo día).">🔢 ${dup.ordinal}/${dup.total}</span>`
+            : '';
+        return `
         <label class="manual-link-row ${manualLinkSelectedBankSourceId === p.source_id ? 'manual-link-row-selected' : ''}">
             <input type="radio" name="manualLinkBank" value="${p.source_id}" ${manualLinkSelectedBankSourceId === p.source_id ? 'checked' : ''} onchange="selectManualLinkBank('${p.source_id}')">
             <span class="manual-link-row-text">
                 <strong>${p.date}</strong> · ${formatCurrency(p.amount)}
                 <span class="manual-link-row-desc">${p.description}</span>
                 <span class="badge badge-info" style="font-size:0.7rem;">${p.source_label || ''}</span>
+                ${dupTag}
             </span>
         </label>
-    `).join('') : '<p class="text-muted" style="padding:10px;">No hay movimientos del banco sin match en esta tanda.</p>';
+    `;
+    }).join('') : '<p class="text-muted" style="padding:10px;">No hay movimientos del banco sin match en esta tanda.</p>';
 
     // Fila reestructurada en div > (label + botón), no solo <label>, para poder meter el botón
     // "Editar" (Propuesta #15) como hermano del label en vez de anidado dentro de él -- un botón
     // anidado en un <label> reactiva también el radio asociado al hacer clic (comportamiento
     // estándar de <label>), lo que habría marcado el huérfano como seleccionado sin querer al
     // pulsar "editar". Las filas del banco (arriba) no lo necesitan y se quedan como <label> solo.
-    orphanList.innerHTML = orphanItems.length ? orphanItems.map(o => {
+    const orphanOrdinals = computeDuplicateOrdinals(orphanItems, o => `${o.date}|${o.amount}|${(o.description || '').trim()}|${o.category || ''}`);
+    orphanList.innerHTML = orphanItems.length ? orphanItems.map((o, idx) => {
         const closeAmount = !!(selectedBank && Math.abs(Math.abs(o.amount) - Math.abs(selectedBank.amount)) < 0.01);
+        const dup = orphanOrdinals[idx];
+        const dupTag = dup
+            ? `<span class="badge badge-warning" style="font-size:0.7rem;" title="Hay ${dup.total} registros de Money Manager con esta misma fecha, importe y descripción -- revisa cuál es cuál antes de confirmar.">🔢 ${dup.ordinal}/${dup.total}</span>`
+            : '';
         return `
         <div class="manual-link-row ${manualLinkSelectedOrphanId === o.id ? 'manual-link-row-selected' : ''} ${closeAmount ? 'manual-link-row-suggested' : ''}">
             <label class="manual-link-row-main">
@@ -1604,6 +1639,7 @@ function renderManualLinkSection() {
                     <span class="manual-link-row-desc">${o.description}${o.category ? ` · ${o.category}` : ''}</span>
                     <span class="badge badge-info" style="font-size:0.7rem;">${o.source_label || ''}</span>
                     ${closeAmount ? '<span class="badge badge-success" style="font-size:0.7rem;">💡 Importe parecido</span>' : ''}
+                    ${dupTag}
                 </span>
             </label>
             <button type="button" class="btn-secondary btn-sm manual-link-edit-btn" onclick="editOrphanFromManualLink('${o.id}', '${o.date}')" title="Editar este registro de Money Manager antes de enlazarlo (p.ej. si tiene un error de fecha/importe/categoría)">✏️</button>
