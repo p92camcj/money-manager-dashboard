@@ -247,7 +247,16 @@ form input, form select { width: 100%; padding: 12px; background: rgba(0,0,0,0.3
     color: var(--text-main); padding: 8px 12px; width: 220px;
 }
 .in-page-search-count { color: var(--text-muted); font-size: 0.8rem; min-width: 90px; }
+.in-page-search-nav-btn { padding: 6px 10px; }
 .search-hidden { display: none !important; }
+/* Coincidencia "activa" (Propuesta #17): distinta de simplemente no estar oculta -- con muchas
+   coincidencias visibles a la vez, hace falta un resaltado propio para saber cuál es la actual
+   sin tener que leer una por una. outline (no border) para no desplazar el layout de una <tr>. */
+.search-active-match {
+    outline: 2px solid #facc15 !important;
+    outline-offset: -2px;
+    background: rgba(250, 204, 21, 0.14) !important;
+}
 
 /* Modo de enlace manual banco <-> Money Manager (huérfanos) -- ver CLAUDE.md/CHANGELOG.md */
 .manual-link-section { margin-bottom: 20px; }

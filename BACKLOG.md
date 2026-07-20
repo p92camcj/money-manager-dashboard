@@ -51,6 +51,21 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Propuesta #17: navegación entre coincidencias en el buscador Ctrl+F
+
+- **Resuelto:** 2026-07-20, versión `0.14.0.52`.
+- **Anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió.
+
+Antes el buscador "Ctrl+F" solo ocultaba lo que no coincidía y mostraba el total de coincidencias,
+sin forma de saltar entre ellas. Botones ◀ ▶ en la propia barra, Enter/Shift+Enter (atados al
+`keydown` del propio input, no al listener global) para siguiente/anterior, resaltado propio de la
+coincidencia "activa" (`.search-active-match`, distinto de simplemente no estar oculta) con
+`scrollIntoView()` hasta ella, y contador "posición / total". `applyInPageSearch()` distingue una
+búsqueda nueva (salta a la primera coincidencia) de una reaplicación tras un re-render con la
+misma búsqueda activa (mantiene la posición, no fuerza scroll) para no deshacer la navegación
+manual del usuario por un refresco de datos de fondo. Verificado en vivo contra el móvil real con
+Playwright. Detalle completo en `CHANGELOG.md`.
+
 ### Bug #7: al confirmar un enlace manual, el movimiento del banco no desaparecía de la lista
 
 - **Resuelto:** 2026-07-20, versión `0.13.4.51`.

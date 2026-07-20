@@ -3,6 +3,39 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.14.0.52 - 2026-07-20
+
+Propuesta #17 del `BACKLOG.md`: navegación entre coincidencias en el buscador "Ctrl+F"
+(`#inPageSearchBar`). Antes solo ocultaba lo que no coincidía y mostraba "X / Y" (el total), pero
+no había forma de saltar entre las Y coincidencias ni concepto de "coincidencia activa".
+
+- Botones ◀ ▶ nuevos en la propia barra (`goToPrevMatch()`/`goToNextMatch()`), y atajos de
+  teclado Enter = siguiente / Shift+Enter = anterior (comportamiento estándar de Ctrl+F en
+  navegadores) -- atados al `keydown` del propio `#inPageSearchInput`
+  (`handleInPageSearchKeydown()`), no al listener global de `document`, para no interferir con
+  Enter en cualquier otro campo de la app.
+- `inPageSearchMatches` (elementos que coinciden ahora mismo, en orden del DOM) e
+  `inPageSearchActiveIndex` (posición dentro de ese array) son el nuevo estado que sostiene la
+  navegación. `focusActiveMatch()` resalta la coincidencia activa con una clase propia
+  (`.search-active-match`, distinta de `.search-hidden`: estar ya visible no implica estar ya EN
+  PANTALLA si hay más coincidencias de las que caben en el viewport) y hace `scrollIntoView()`
+  hasta ella.
+- El contador ahora muestra `posición / total` (antes solo `coincidencias / total`, sin indicar
+  cuál era "la actual").
+- `applyInPageSearch(resetActive, scroll)` distingue una búsqueda nueva (`resetActive=true`, salta
+  a la primera coincidencia) de una reaplicación tras un re-render con la MISMA búsqueda todavía
+  activa (`reapplyInPageSearch()`, con `resetActive=false, scroll=false`) -- los nodos del DOM son
+  nuevos tras un `innerHTML` reconstruido, así que no se puede "seguir el mismo elemento"; se
+  mantiene la misma POSICIÓN en la lista de coincidencias en vez de saltar a la primera, para no
+  deshacer la navegación manual del usuario por un refresco de datos de fondo (p.ej. cambiar el
+  filtro de etiqueta en Conciliación mientras se está navegando una búsqueda).
+
+**Verificado en vivo contra el móvil real** (Chromium/Playwright, no solo trazado de código):
+en Transacciones, con una búsqueda de varias coincidencias reales, el contador arranca en "1 / N";
+el botón ▶, Enter y Shift+Enter avanzan/retroceden correctamente la posición y cambian cuál fila
+lleva `.search-active-match`; retroceder desde la primera coincidencia da la vuelta a la última
+(y viceversa); al cerrar con Escape no queda ninguna coincidencia marcada como activa.
+
 ## 0.13.4.51 - 2026-07-20
 
 Bug (Bug #7 del `BACKLOG.md`): al confirmar un enlace manual, el huérfano de MM (columna derecha)

@@ -1858,6 +1858,12 @@ async function showFullNovedades() {
 // ya existía en Transacciones (#filterSearch, que solo busca por columnas concretas de esa
 // tabla) -- este buscador es genérico y funciona igual en cualquier pestaña con una lista.
 let inPageSearchQuery = '';
+// Propuesta #17 (BACKLOG.md): navegación entre coincidencias, no solo ocultar lo que no coincide.
+// inPageSearchMatches son los elementos que coinciden AHORA MISMO, en el mismo orden en que
+// getInPageSearchItems() los devuelve (orden del DOM); inPageSearchActiveIndex es la posición
+// dentro de ese array que está "activa" (resaltada + con scroll hecho hasta ella).
+let inPageSearchMatches = [];
+let inPageSearchActiveIndex = -1;
 
 // El rango de la clase de caracteres es el bloque Unicode "Combining Diacritical Marks"
 // (U+0300-U+036F) escrito literalmente -- tras normalize('NFD') una tilde queda como su letra
@@ -1879,36 +1885,95 @@ function getInPageSearchItems() {
     }
 }
 
-function updateInPageSearchCount(matches, total) {
+function updateInPageSearchCount() {
     const el = document.getElementById('inPageSearchCount');
     if (!el) return;
-    if (matches === null) { el.textContent = ''; return; }
-    el.textContent = total > 0 ? `${matches} / ${total}` : 'Sin resultados aquí';
+    if (!inPageSearchQuery) { el.textContent = ''; return; }
+    const total = inPageSearchMatches.length;
+    el.textContent = total > 0 ? `${inPageSearchActiveIndex + 1} / ${total}` : 'Sin resultados aquí';
 }
 
-function applyInPageSearch() {
+// Quita el resaltado de "coincidencia activa" de todas y lo pone en la de inPageSearchActiveIndex
+// -- distinto de .search-hidden (oculta lo que NO coincide): esto distingue, DENTRO de lo ya
+// visible, cuál de las posiblemente muchas coincidencias es la que está "seleccionada" ahora
+// mismo, y hace scroll hasta ella si `scroll` es true. Estar oculto (search-hidden) no implica
+// estar ya visible en pantalla si hay más coincidencias de las que caben en el viewport.
+function focusActiveMatch(scroll) {
+    inPageSearchMatches.forEach(el => el.classList.remove('search-active-match'));
+    if (inPageSearchActiveIndex >= 0 && inPageSearchMatches[inPageSearchActiveIndex]) {
+        const el = inPageSearchMatches[inPageSearchActiveIndex];
+        el.classList.add('search-active-match');
+        if (scroll) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    updateInPageSearchCount();
+}
+
+// resetActive=true (por defecto): nueva búsqueda o texto cambiado -- salta a la primera
+// coincidencia. resetActive=false: reaplicación tras un re-render con la MISMA búsqueda todavía
+// activa (reapplyInPageSearch()) -- los nodos del DOM son nuevos (innerHTML los reconstruyó), así
+// que no se puede seguir "el mismo elemento"; se mantiene la misma POSICIÓN dentro de la lista de
+// coincidencias en vez de saltar a la primera, para no deshacer la navegación manual del usuario
+// por un refresco de datos de fondo. scroll=false evita un scroll brusco no solicitado por el
+// usuario en ese caso.
+function applyInPageSearch(resetActive, scroll) {
+    if (resetActive === undefined) resetActive = true;
+    if (scroll === undefined) scroll = true;
+
     const items = getInPageSearchItems();
     if (!inPageSearchQuery) {
-        items.forEach(el => el.classList.remove('search-hidden'));
-        updateInPageSearchCount(null, items.length);
+        items.forEach(el => { el.classList.remove('search-hidden'); el.classList.remove('search-active-match'); });
+        inPageSearchMatches = [];
+        inPageSearchActiveIndex = -1;
+        updateInPageSearchCount();
         return;
     }
+
     const q = normalizeForSearch(inPageSearchQuery);
-    let matches = 0;
+    inPageSearchMatches = [];
     items.forEach(el => {
         const isMatch = normalizeForSearch(el.textContent).includes(q);
         el.classList.toggle('search-hidden', !isMatch);
-        if (isMatch) matches++;
+        el.classList.remove('search-active-match');
+        if (isMatch) inPageSearchMatches.push(el);
     });
-    updateInPageSearchCount(matches, items.length);
+
+    if (resetActive || inPageSearchActiveIndex < 0) {
+        inPageSearchActiveIndex = inPageSearchMatches.length > 0 ? 0 : -1;
+    } else {
+        inPageSearchActiveIndex = Math.min(inPageSearchActiveIndex, inPageSearchMatches.length - 1);
+    }
+    focusActiveMatch(scroll);
+}
+
+function goToNextMatch() {
+    if (inPageSearchMatches.length === 0) return;
+    inPageSearchActiveIndex = (inPageSearchActiveIndex + 1) % inPageSearchMatches.length;
+    focusActiveMatch(true);
+}
+
+function goToPrevMatch() {
+    if (inPageSearchMatches.length === 0) return;
+    inPageSearchActiveIndex = (inPageSearchActiveIndex - 1 + inPageSearchMatches.length) % inPageSearchMatches.length;
+    focusActiveMatch(true);
+}
+
+// Enter = siguiente, Shift+Enter = anterior -- comportamiento estándar de Ctrl+F en navegadores.
+// Atado al keydown del propio #inPageSearchInput (no al listener global de document), para no
+// interferir con Enter en cualquier otro campo de la app.
+function handleInPageSearchKeydown(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        if (e.shiftKey) goToPrevMatch(); else goToNextMatch();
+    }
 }
 
 // Los render*() de listas reconstruyen su contenido con innerHTML, perdiendo cualquier clase
-// search-hidden ya aplicada -- se llama al final de cada uno de ellos (renderTransactions(),
-// renderProposalsList(), renderMmOrphansList(), renderBudgets()) para que la búsqueda activa
-// sobreviva a un refresco de datos o a un cambio de filtro/etiqueta. No-op si no hay búsqueda activa.
+// search-hidden/search-active-match ya aplicada -- se llama al final de cada uno de ellos
+// (renderTransactions(), renderProposalsList(), renderMmOrphansList(), renderBudgets()) para que
+// la búsqueda activa sobreviva a un refresco de datos o a un cambio de filtro/etiqueta. No-op si
+// no hay búsqueda activa. resetActive=false/scroll=false: ver applyInPageSearch().
 function reapplyInPageSearch() {
-    if (inPageSearchQuery) applyInPageSearch();
+    if (inPageSearchQuery) applyInPageSearch(false, false);
 }
 
 function openInPageSearch() {
@@ -1926,16 +1991,19 @@ function closeInPageSearch() {
     const bar = document.getElementById('inPageSearchBar');
     if (bar) bar.style.display = 'none';
     inPageSearchQuery = '';
+    inPageSearchMatches = [];
+    inPageSearchActiveIndex = -1;
     const input = document.getElementById('inPageSearchInput');
     if (input) input.value = '';
     // Limpia también los ítems de otras pestañas por si se dejaron ocultos al cambiar de pestaña
     // con la búsqueda todavía activa.
     document.querySelectorAll('.search-hidden').forEach(el => el.classList.remove('search-hidden'));
+    document.querySelectorAll('.search-active-match').forEach(el => el.classList.remove('search-active-match'));
 }
 
 function handleInPageSearchInput(value) {
     inPageSearchQuery = value;
-    applyInPageSearch();
+    applyInPageSearch(true, true);
 }
 
 document.addEventListener('keydown', (e) => {

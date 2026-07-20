@@ -4,6 +4,12 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.14.0.52 - 2026-07-20
+
+- El buscador Ctrl+F ahora deja moverte entre los resultados: botones ◀ ▶, o Enter/Shift+Enter
+  desde el propio buscador. La coincidencia actual se resalta y la pantalla se desplaza sola hasta
+  ella.
+
 ## 0.13.4.51 - 2026-07-20
 
 - Arreglado en "Enlazar manualmente": si el banco tenía dos movimientos idénticos (misma fecha,
