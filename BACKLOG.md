@@ -70,9 +70,13 @@ Asociado" sin tener que volver a subir el Excel. Ordena los huérfanos por cerca
 movimiento del banco seleccionado y resalta con badge los que coinciden hasta el céntimo. Detalle
 completo en `CLAUDE.md`, sección "Modo de enlace manual banco ↔ Money Manager".
 
-**Verificación:** sin móvil/navegador disponibles en la sesión en que se implementó -- verificado
-por trazado de código y sintaxis completa (`node --check`), no probado end-to-end con un caso real
-de Amazon ni en un navegador real. Pendiente de una verificación en vivo.
+**Verificación en vivo (2026-07-20, sesión posterior), con un caso real de Amazon:** con el móvil
+conectado, se enlazó `WWW.AMAZON* WM4XA8OY5` (banco, `-14,70€`, 2026-07-05) con
+`Amazon Chuches Reena 56x2` (Money Manager, `14,70€`, 2026-07-01) -- exactamente el caso motivador
+(concepto irreconocible en el banco, fecha desplazada 4 días). Confirmado sin volver a subir el
+Excel (`new` 3→2, `reconciled` 3→4, huérfanos 35→34), "Ver Registro Asociado" abrió el registro
+real, y al re-subir el mismo fichero el enlace persistió sin reaparecer como pendiente. Repetido
+con un segundo par real con idéntico resultado. Detalle completo en `CLAUDE.md`.
 
 ### Propuesta #12: buscador estilo "Ctrl+F" en toda la pantalla
 
@@ -86,11 +90,14 @@ Filtra por substring sin distinguir mayúsculas/tildes contra el texto visible d
 (Transacciones, Conciliación, Presupuestos), ocultando lo que no coincide; se cierra con Escape.
 Detalle completo en `CLAUDE.md`, sección "Buscador 'Ctrl+F' en toda la pantalla".
 
-**Verificación:** sin navegador disponible en la sesión en que se implementó -- verificada la
-sintaxis completa del fichero (`node --check static/script.js`) y, por separado, la lógica de
-normalización de texto (`normalizeForSearch()`) evaluada en Node contra casos reales con
-tildes/mayúsculas. La integración con el DOM real se verificó por trazado de código, no en un
-navegador real.
+**Verificación en vivo (2026-07-20, sesión posterior):** con el móvil conectado, en un navegador
+real (Chromium vía Playwright). Antes de nada se revisó `static/index.html` byte a byte alrededor
+de `#inPageSearchBar` (sospecha de caracteres Unicode invisibles) -- no se encontró ninguno.
+Verificado en Transacciones (147 filas reales): buscar `"maracuya"` sin tilde encuentra la única
+fila real con `"maracuyá"`, contador `"1 / 147"`, vaciar el campo restaura todo, Escape cierra y
+restaura. Verificado también en Presupuestos (15 categorías) y en Conciliación (100 propuestas +
+35 huérfanos reales tras analizar un extracto real). Cero errores de consola. Detalle completo en
+`CLAUDE.md`.
 
 ### Bug #5: la subcategoría no cargaba la primera vez que se abría el modal de detalle
 

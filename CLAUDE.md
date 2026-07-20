@@ -733,12 +733,22 @@ puede ni estar accesible) que en la vía técnica con navegador normal.
   llama explícitamente después de `updateUI()` para cubrir Conciliación, cuyas tarjetas no se
   reconstruyen solo por cambiar de pestaña. Así una búsqueda activa sobrevive a un refresco de
   datos, un cambio de filtro/etiqueta o un cambio de pestaña sin tener que repetirla a mano.
-- **Verificación**: sin navegador/móvil disponibles en la sesión en que se implementó, se verificó
-  la sintaxis del fichero completo (`node --check static/script.js`) y, por separado, la lógica de
-  `normalizeForSearch()` extraída y evaluada en Node contra casos con tildes/mayúsculas reales
-  (`"Depósito"` vs `"deposito"` normalizan igual). El resto (integración con el DOM real,
-  comportamiento visual de `.search-hidden`) se verificó por trazado de código, no en un navegador
-  real — pendiente de una verificación visual en vivo si aparece algún caso raro.
+- **Verificación en vivo (2026-07-20, sesión posterior)**: con el móvil conectado, en un
+  navegador real (Chromium vía Playwright, la app servida por `python app.py` contra datos reales
+  del móvil). Antes de nada, se revisó a mano `static/index.html` en la zona de
+  `#inPageSearchBar` con un volcado de bytes (`od -c`) y un barrido de todo el fichero buscando
+  caracteres Unicode invisibles (`​`, `‌`, `﻿`, marcas bidi, etc.) — no se encontró
+  ninguno; `#inPageSearchCount` es un `<span>` real, vacío y correctamente cerrado, accesible por
+  `getElementById` sin problema. Verificado en Transacciones (147 filas reales del periodo
+  económico actual): Ctrl+F abre la barra, buscar `"maracuya"` (sin tilde) encuentra la única fila
+  real con `"maracuyá"` (con tilde) — confirma `normalizeForSearch()` contra datos reales, no solo
+  en Node aislado —, el contador muestra `"1 / 147"`, vaciar el campo restaura las 147 filas sin
+  cerrar la barra, y Escape cierra y restaura. En Presupuestos (15 categorías reales), un fragmento
+  en minúsculas de la primera categoría (con emoji/mayúsculas) filtra correctamente el árbol. En
+  Conciliación, tras analizar un extracto real (`samples/casa_julio_250626-180726.xls`, cuenta
+  "👬 Cta común casa" + tarjeta vinculada, 100 propuestas + 35 huérfanos), Ctrl+F también filtra
+  las tarjetas de `#proposalsList`/`#mmOrphansList` correctamente. Cero errores de consola en todo
+  el recorrido.
 
 ## Modo de enlace manual banco ↔ Money Manager
 
@@ -791,13 +801,24 @@ resolverlos a mano.
   filas de este modo — solo las tarjetas de `#proposalsList`/`#mmOrphansList`/filas de
   `#transBody`/nodos de `#budgetTree`. Es una herramienta especializada aparte, no una lista más
   del flujo principal de revisión.
-- **Verificación**: sin móvil/navegador disponibles en la sesión en que se implementó (mismas
-  limitaciones que el buscador Ctrl+F, ver sección anterior) — verificado por trazado de código
-  (sintaxis completa con `node --check static/script.js`, y a mano que el payload de
-  `confirmManualLink()` coincide campo a campo con el que ya acepta `/api/reconciliations/confirm`,
-  sin tocar el backend). No probado end-to-end con un caso real de Amazon ni con datos sintéticos
-  en un navegador real — pendiente de una verificación en vivo la próxima vez que haya conexión al
-  móvil.
+- **Verificación en vivo (2026-07-20, sesión posterior), con un caso real de Amazon**: con el
+  móvil conectado, se subió `samples/casa_julio_250626-180726.xls` con la cuenta real
+  "👬 Cta común casa" + su tarjeta vinculada. El modo manual listó 3 movimientos del banco sin
+  match y 35 huérfanos de MM. Se enlazó `WWW.AMAZON* WM4XA8OY5` (banco, `-14,70€`, 2026-07-05) con
+  `Amazon Chuches Reena 56x2` (Money Manager, `14,70€`, 2026-07-01, categoría 🐾 MASCOTAS) — el
+  caso motivador exacto: mismo importe, concepto irreconocible en el banco (solo el número de
+  pedido), fecha desplazada 4 días entre el cobro real y el registro en MM. Tras confirmar, sin
+  volver a subir el Excel: `lastProposals` pasó de 3→2 `new` y de 3→4 `reconciled`, `lastOrphans`
+  de 35→34, la propuesta enlazada mostró "Ya Conciliado" y "Ver Registro Asociado" abrió
+  correctamente el modal de edición con el registro real de Money Manager. Al volver a subir el
+  MISMO fichero con la misma cuenta, el enlace persistió (`reconciled`, no reapareció como `new` ni
+  como huérfano) — confirma que `excluded_mm_ids`/`make_key()` en `analyze_excel()` cubren también
+  los enlaces creados por este modo, sin necesidad de ningún cambio en el backend. Repetido una
+  segunda vez con otro par real (`WWW.AMAZON* NY9NA06R5` -7,98€ ↔ otra instalación real de
+  "Amazon Chuches Reena 56x2" con id distinto — Money Manager trocea un mismo pedido en varias
+  transacciones internas con el mismo texto pero id real distinto, ver "prorrateos internos
+  automáticos" en la Propuesta #11) con idéntico resultado. Cero errores de consola en todo el
+  recorrido.
 
 ## Aviso de conexión perdida con el móvil
 
