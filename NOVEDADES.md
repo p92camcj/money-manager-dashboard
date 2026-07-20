@@ -4,6 +4,11 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.13.1.48 - 2026-07-20
+
+- En "Enlazar manualmente", ahora puedes pulsar ✏️ junto a un movimiento de Money Manager para
+  corregirlo (fecha, importe, categoría...) antes de confirmar el enlace, sin perder tu sitio.
+
 ## 0.13.0.47 - 2026-07-20
 
 - Nuevo en Conciliación: botón "Deshacer última conciliación". Antes de deshacer nada te enseña

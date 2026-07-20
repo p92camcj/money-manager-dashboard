@@ -3,6 +3,41 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.13.1.48 - 2026-07-20
+
+Propuesta #15 del `BACKLOG.md`: botón para abrir el modal de edición de un huérfano de Money
+Manager directamente desde el modo de enlace manual, ANTES de confirmar el enlace -- pensado para
+cuando al revisar el emparejamiento el usuario se da cuenta de que el registro en MM tiene un
+error de introducción (fecha, céntimos, categoría, concepto) y quiere corregirlo ahí mismo.
+
+- Botón "✏️" nuevo junto a cada huérfano de MM en `#manualLinkOrphanList` (`editOrphanFromManualLink()`
+  en `static/script.js`), que reutiliza tal cual el modal de edición ya existente (mismo mecanismo
+  que "Ver Registro Asociado", Propuesta #10) -- `manualLinkEditingOrphanId` es lo único distinto,
+  para que `submitTransaction()`/`submitTransfer()` sepan que hay que refrescar ese huérfano
+  concreto en `lastOrphans` tras guardar (`refreshEditedOrphan()`, una consulta puntual igual que
+  `fetchTransactionById()`) en vez de dejar la fila con el valor antiguo hasta el próximo análisis
+  completo del Excel.
+- **Fila de huérfano reestructurada** en `renderManualLinkSection()`: pasa de un único `<label
+  class="manual-link-row">` a un `<div class="manual-link-row">` con un `<label
+  class="manual-link-row-main">` (radio + texto, clic para seleccionar) y el botón "Editar" como
+  HERMANO, no anidado dentro del label -- un botón anidado en un `<label>` reactiva también el
+  radio asociado al hacer clic (comportamiento estándar del navegador), lo que habría marcado el
+  huérfano como seleccionado sin querer al pulsar "editar". Las filas del banco (sin este botón)
+  se quedan como estaban.
+- Al guardar y cerrar el modal, se vuelve exactamente al modo de enlace manual donde se estaba
+  (misma selección, mismo scroll) -- gratis por el mismo motivo que Propuesta #10: el modal es un
+  overlay `position: fixed` y el flujo nunca navega de pestaña ni reconstruye el modo manual
+  mientras está abierto.
+- **Limitación conocida, no un bug**: si el huérfano editado es una transferencia, su `id` CAMBIA
+  tras la edición (ver CLAUDE.md, "Transferencias internas de Money Manager") -- `refreshEditedOrphan()`
+  ya no encuentra el id viejo y no hace nada, en vez de fallar; esa fila concreta no se refresca
+  hasta el próximo análisis completo.
+
+**Verificado en vivo contra el móvil real**: el botón abre el modal con el registro real
+correcto, guardar (edición sin cambios, para no alterar datos financieros reales del usuario
+solo para la prueba) devuelve a la sección de enlace manual visible, con la selección del huérfano
+y el scroll de la pantalla exactamente iguales que antes de abrir el modal.
+
 ## 0.13.0.47 - 2026-07-20
 
 Propuesta #14 del `BACKLOG.md`: deshacer la última conciliación confirmada (por "Confirmar Este"

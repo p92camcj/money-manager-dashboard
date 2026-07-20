@@ -13,6 +13,7 @@ let currentLabelFilter = 'all'; // etiqueta de origen seleccionada en el filtro 
 let manualLinkMode = false; // modo de enlace manual banco <-> Money Manager activo en Conciliación
 let manualLinkSelectedBankSourceId = null; // source_id del proposal 'new' elegido en el modo manual
 let manualLinkSelectedOrphanId = null; // id de mm_orphans elegido en el modo manual
+let manualLinkEditingOrphanId = null; // id de mm_orphans cuyo modal de edición está abierto desde el modo manual (Propuesta #15)
 // Última conciliación confirmada EN ESTA SESIÓN (por confirmMatch() o confirmManualLink()), para
 // que undoLastReconciliation() (Propuesta #14) pueda revertir el estado local al instante sin
 // tener que volver a analizar el Excel. Si el usuario deshace algo confirmado en una sesión
@@ -591,6 +592,7 @@ function openEditModal(tId) {
 function closeModal() {
     currentEditingId = null;
     modalOpenedFromConciliation = false;
+    manualLinkEditingOrphanId = null;
     document.getElementById('editModal').style.display = 'none';
 }
 
@@ -859,14 +861,23 @@ async function submitTransaction() {
         
         const text = await resp.text();
         if (text === 'true' || text.includes('success:true') || text.includes('success') || resp.ok) {
-            // Capturar ANTES de closeModal(), que pone currentEditingId/modalOpenedFromConciliation
-            // a su valor por defecto -- leerlos después (como hacía antes este bloque) hacía que
-            // targetId y el mensaje de "modificada" nunca acertaran tras una edición.
+            // Capturar ANTES de closeModal(), que pone currentEditingId/modalOpenedFromConciliation/
+            // manualLinkEditingOrphanId a su valor por defecto -- leerlos después (como hacía antes
+            // este bloque) hacía que targetId y el mensaje de "modificada" nunca acertaran tras una
+            // edición.
             const wasEditingId = currentEditingId;
             const cameFromConciliation = modalOpenedFromConciliation;
+            const editedOrphanId = manualLinkEditingOrphanId;
             closeModal();
             // Refrescar en silencio los datos de sqlite
             await fetchTransactions();
+
+            if (editedOrphanId) {
+                // Propuesta #15 (BACKLOG.md): editado desde una fila de huérfano del modo de
+                // enlace manual -- refresca solo ese huérfano en lastOrphans (y su fila en el modo
+                // manual) con los datos ya corregidos, sin esperar a un re-análisis completo.
+                await refreshEditedOrphan(editedOrphanId);
+            }
 
             if (cameFromConciliation) {
                 // Abierto desde "Ver Registro Asociado" en Conciliación (Propuesta #10,
@@ -949,9 +960,19 @@ async function submitTransfer() {
         if (text === 'true' || text.includes('success:true') || text.includes('success') || resp.ok) {
             // Capturar antes de closeModal() -- ver mismo comentario en submitTransaction().
             const wasEditingId = currentEditingId;
+            const editedOrphanId = manualLinkEditingOrphanId;
             closeModal();
             await fetchTransactions();
             renderTransactions();
+            if (editedOrphanId) {
+                // Propuesta #15 (BACKLOG.md): mismo refresco que en submitTransaction(). Caso raro
+                // sin cubrir del todo: el id de una transferencia CAMBIA tras cada edición (ver
+                // CLAUDE.md, "Transferencias internas de Money Manager") -- si el huérfano editado
+                // era una transferencia, refreshEditedOrphan() ya no encuentra el id viejo y no
+                // hace nada (se degrada en silencio, sin refrescar esa fila hasta el próximo
+                // análisis completo), en vez de fallar.
+                await refreshEditedOrphan(editedOrphanId);
+            }
             alert(wasEditingId ? "Transferencia modificada." : "Transferencia añadida exitosamente.");
         } else {
             alert("Error al guardar la transferencia: " + resp.status + " | " + text);
@@ -1386,6 +1407,51 @@ async function viewAssociatedRecord(mmId, proposalDate) {
     populateEditFormFromTransaction(t);
 }
 
+// Propuesta #15 (BACKLOG.md): igual que viewAssociatedRecord(), pero desde una fila de huérfano
+// de MM del modo de enlace manual -- para corregir un error de introducción (fecha, céntimos,
+// categoría...) ANTES de confirmar el enlace, en vez de descubrirlo después. Reutiliza el mismo
+// modal/flujo de guardado que Propuesta #10 (modalOpenedFromConciliation evita navegar de
+// pestaña); manualLinkEditingOrphanId es lo único distinto -- submitTransaction()/submitTransfer()
+// lo comprueban tras guardar para refrescar SOLO ese huérfano en lastOrphans con los datos ya
+// corregidos, en vez de dejar la fila con el valor antiguo hasta el próximo análisis completo.
+async function editOrphanFromManualLink(mmId, date) {
+    let t = transactionsData.find(x => String(x.id) === String(mmId));
+    if (!t) {
+        t = await fetchTransactionById(mmId, date);
+    }
+    if (!t) {
+        alert("No se encontró el registro de Money Manager.");
+        return;
+    }
+    modalOpenedFromConciliation = true;
+    manualLinkEditingOrphanId = mmId;
+    openEditModal(t.id);
+    populateEditFormFromTransaction(t);
+}
+
+// Tras editar un huérfano desde el modo de enlace manual (editOrphanFromManualLink()), refresca
+// SOLO ese registro en lastOrphans con los datos ya guardados -- una consulta puntual igual que
+// fetchTransactionById(), sin tocar transactionsData/caché del Dashboard, para que la fila del
+// modo manual deje de mostrar el valor antiguo sin esperar a un re-análisis completo del Excel.
+// Si el registro editado ya no encaja en ninguna fecha cercana (p.ej. se cambió la fecha muy
+// lejos), simplemente no se encuentra y la fila se deja tal cual -- un caso raro, no un error.
+async function refreshEditedOrphan(mmId) {
+    const idx = (lastOrphans || []).findIndex(o => String(o.id) === String(mmId));
+    if (idx === -1) return;
+    const fresh = await fetchTransactionById(mmId, lastOrphans[idx].date);
+    if (!fresh) return;
+    const isTransfer = fresh.inOutCode === '3' || fresh.inOutCode === '4';
+    lastOrphans[idx] = {
+        ...lastOrphans[idx],
+        date: fresh.mbDate ? fresh.mbDate.split(/[ T]/)[0] : lastOrphans[idx].date,
+        amount: parseFloat(fresh.mbCash) || 0,
+        description: fresh.mbContent || '',
+        category: isTransfer ? '' : (fresh.mbCategory || ''),
+    };
+    renderMmOrphansList();
+    renderManualLinkSection();
+}
+
 async function confirmMatch(sourceId, candId) {
     const proposal = lastProposals.find(p => p.source_id === sourceId);
     if (!proposal) {
@@ -1522,18 +1588,26 @@ function renderManualLinkSection() {
         </label>
     `).join('') : '<p class="text-muted" style="padding:10px;">No hay movimientos del banco sin match en esta tanda.</p>';
 
+    // Fila reestructurada en div > (label + botón), no solo <label>, para poder meter el botón
+    // "Editar" (Propuesta #15) como hermano del label en vez de anidado dentro de él -- un botón
+    // anidado en un <label> reactiva también el radio asociado al hacer clic (comportamiento
+    // estándar de <label>), lo que habría marcado el huérfano como seleccionado sin querer al
+    // pulsar "editar". Las filas del banco (arriba) no lo necesitan y se quedan como <label> solo.
     orphanList.innerHTML = orphanItems.length ? orphanItems.map(o => {
         const closeAmount = !!(selectedBank && Math.abs(Math.abs(o.amount) - Math.abs(selectedBank.amount)) < 0.01);
         return `
-        <label class="manual-link-row ${manualLinkSelectedOrphanId === o.id ? 'manual-link-row-selected' : ''} ${closeAmount ? 'manual-link-row-suggested' : ''}">
-            <input type="radio" name="manualLinkOrphan" value="${o.id}" ${manualLinkSelectedOrphanId === o.id ? 'checked' : ''} onchange="selectManualLinkOrphan('${o.id}')">
-            <span class="manual-link-row-text">
-                <strong>${o.date}</strong> · ${formatCurrency(o.amount)}
-                <span class="manual-link-row-desc">${o.description}${o.category ? ` · ${o.category}` : ''}</span>
-                <span class="badge badge-info" style="font-size:0.7rem;">${o.source_label || ''}</span>
-                ${closeAmount ? '<span class="badge badge-success" style="font-size:0.7rem;">💡 Importe parecido</span>' : ''}
-            </span>
-        </label>
+        <div class="manual-link-row ${manualLinkSelectedOrphanId === o.id ? 'manual-link-row-selected' : ''} ${closeAmount ? 'manual-link-row-suggested' : ''}">
+            <label class="manual-link-row-main">
+                <input type="radio" name="manualLinkOrphan" value="${o.id}" ${manualLinkSelectedOrphanId === o.id ? 'checked' : ''} onchange="selectManualLinkOrphan('${o.id}')">
+                <span class="manual-link-row-text">
+                    <strong>${o.date}</strong> · ${formatCurrency(o.amount)}
+                    <span class="manual-link-row-desc">${o.description}${o.category ? ` · ${o.category}` : ''}</span>
+                    <span class="badge badge-info" style="font-size:0.7rem;">${o.source_label || ''}</span>
+                    ${closeAmount ? '<span class="badge badge-success" style="font-size:0.7rem;">💡 Importe parecido</span>' : ''}
+                </span>
+            </label>
+            <button type="button" class="btn-secondary btn-sm manual-link-edit-btn" onclick="editOrphanFromManualLink('${o.id}', '${o.date}')" title="Editar este registro de Money Manager antes de enlazarlo (p.ej. si tiene un error de fecha/importe/categoría)">✏️</button>
+        </div>
     `;
     }).join('') : '<p class="text-muted" style="padding:10px;">No hay movimientos de Money Manager sin equivalente en esta tanda.</p>';
 

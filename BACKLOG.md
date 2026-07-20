@@ -51,6 +51,24 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Propuesta #15: editar un huérfano de MM desde el modo de enlace manual, antes de confirmar
+
+- **Resuelto:** 2026-07-20, versión `0.13.1.48`.
+- **Anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió.
+
+Botón "✏️" junto a cada huérfano de MM en `#manualLinkOrphanList`, para corregir un error de
+introducción (fecha, céntimos, categoría, concepto) justo al revisar el emparejamiento, antes de
+confirmar el enlace. Reutiliza el modal de edición ya existente (mismo mecanismo que "Ver Registro
+Asociado", Propuesta #10); `refreshEditedOrphan()` refresca solo ese huérfano en `lastOrphans` tras
+guardar, sin esperar a un re-análisis completo. Fila de huérfano reestructurada (`<div>` con el
+`<label>` de selección y el botón como hermanos, no anidados) para que pulsar "editar" no marque
+también el radio de selección. Limitación conocida: si el huérfano editado es una transferencia, su
+`id` cambia tras la edición y esa fila concreta no se refresca hasta el próximo análisis completo.
+
+**Verificación en vivo contra el móvil real**: el botón abre el modal con el registro real
+correcto; tras guardar, se vuelve a la sección de enlace manual con la misma selección y el mismo
+scroll que antes. Detalle completo en `CHANGELOG.md`.
+
 ### Propuesta #14: deshacer la última conciliación confirmada
 
 - **Resuelto:** 2026-07-20, versión `0.13.0.47`.
