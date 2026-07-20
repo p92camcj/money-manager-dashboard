@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Money Manager Premium - Dashboard</title>
-    <link rel="stylesheet" href="style.css?v=18">
+    <link rel="stylesheet" href="style.css?v=19">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
@@ -133,8 +133,10 @@
                     <h3>Enlazar manualmente banco ↔ Money Manager</h3>
                     <p class="manual-link-hint">Para movimientos que el matching automático no cruza (p.ej. un cargo de Amazon que en el
                         banco solo trae el número de pedido y en Money Manager un concepto distinto, con la fecha desplazada uno o dos
-                        días). Elige una línea de cada lista y confirma -- no se escribe nada en Money Manager, solo se vincula
-                        localmente, igual que al confirmar una coincidencia sugerida.</p>
+                        días, o varios movimientos de un lado que en conjunto son uno solo del otro -- p.ej. tres abonos de intereses
+                        del banco = un único registro de "Ingresos por intereses" en Money Manager). Marca una o varias líneas de cada
+                        lista y confirma -- no se escribe nada en Money Manager, solo se vincula localmente, igual que al confirmar una
+                        coincidencia sugerida.</p>
                     <div class="manual-link-columns">
                         <div class="manual-link-column">
                             <h4>Movimientos del banco sin match</h4>
@@ -145,6 +147,8 @@
                             <div id="manualLinkOrphanList" class="manual-link-list"></div>
                         </div>
                     </div>
+                    <div id="manualLinkSums" class="manual-link-sums"></div>
+                    <div id="manualLinkMismatchWarning" class="manual-link-mismatch-warning" style="display:none;"></div>
                     <div class="modal-buttons" style="margin-top:15px;">
                         <button type="button" class="btn-primary btn-sm" id="manualLinkConfirmBtn" disabled onclick="confirmManualLink()">Confirmar enlace</button>
                     </div>
@@ -267,6 +271,6 @@
     </div>
 
     <script src="js/analytics.js?v=8"></script>
-    <script src="script.js?v=29"></script>
+    <script src="script.js?v=30"></script>
 </body>
 </html>

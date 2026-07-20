@@ -10,15 +10,28 @@ let lastProposals = []; // última tanda de propuestas de conciliación, para qu
 let lastOrphans = []; // última tanda de huérfanos de Money Manager sin equivalente en el extracto (Propuesta #11, arqueo de caja)
 let pendingFiles = []; // ficheros seleccionados pendientes de etiquetar/confirmar antes de subir
 let currentLabelFilter = 'all'; // etiqueta de origen seleccionada en el filtro de propuestas
+// Propuesta #16 (BACKLOG.md): badges de #reconciliationSummaryBar como filtros multiseleccionables
+// (no excluyentes entre sí) -- valores posibles: 'matched', 'pending', 'bankOnly', 'mmOnly'.
+// Conjunto vacío == sin filtro de estado activo (se muestra todo, igual que antes de esta
+// propuesta). Se combina en AND con currentLabelFilter y con la búsqueda Ctrl+F, nunca los
+// sustituye. Vive junto a currentLabelFilter porque comparte el mismo ciclo de vida: se resetea
+// al analizar una tanda nueva (datos completamente distintos), pero sobrevive a re-renders,
+// cambios de etiqueta y confirmaciones de match/enlace dentro de la misma tanda.
+let activeSummaryFilters = new Set();
 let manualLinkMode = false; // modo de enlace manual banco <-> Money Manager activo en Conciliación
-let manualLinkSelectedBankSourceId = null; // source_id del proposal 'new' elegido en el modo manual
-let manualLinkSelectedOrphanId = null; // id de mm_orphans elegido en el modo manual
+// Propuesta #16 (BACKLOG.md): selección múltiple en ambos lados (antes un único id por radio) --
+// Sets de source_id/id, para permitir enlaces N:M (varias líneas de banco <-> varios registros MM).
+let manualLinkSelectedBankSourceIds = new Set();
+let manualLinkSelectedOrphanIds = new Set();
 let manualLinkEditingOrphanId = null; // id de mm_orphans cuyo modal de edición está abierto desde el modo manual (Propuesta #15)
 // Última conciliación confirmada EN ESTA SESIÓN (por confirmMatch() o confirmManualLink()), para
 // que undoLastReconciliation() (Propuesta #14) pueda revertir el estado local al instante sin
 // tener que volver a analizar el Excel. Si el usuario deshace algo confirmado en una sesión
 // anterior (o tras recargar la página), esto es null y undoLastReconciliation() se degrada a
-// avisar que hay que volver a analizar el fichero para verlo reflejado.
+// avisar que hay que volver a analizar el fichero para verlo reflejado. Propuesta #16: `keys` es
+// ahora siempre un array (una clave por línea de banco implicada, aunque sea solo 1), y
+// `bankChanges`/`orphansRemoved` son arrays -- un enlace N:M puede tocar varias propuestas y
+// varios huérfanos a la vez, y deshacer debe revertirlos todos como una sola unidad.
 let lastConfirmedAction = null;
 
 // Mapa nombre de categoría/subcategoría -> mcid/mcscid reales de Money Manager (Bug #2,
@@ -1129,6 +1142,7 @@ async function confirmUploadFiles() {
         lastProposals = data.proposals || [];
         lastOrphans = data.mm_orphans || [];
         currentLabelFilter = 'all';
+        activeSummaryFilters = new Set();
 
         if (data.file_errors && data.file_errors.length > 0) {
             const detalle = data.file_errors.map(fe => `${fe.filename} (${fe.label}): ${fe.error}`).join('\n');
@@ -1141,8 +1155,8 @@ async function confirmUploadFiles() {
         renderReconciliationSummary();
         // Datos nuevos -> cualquier selección del modo de enlace manual quedaría apuntando a
         // objetos que ya no están en lastProposals/lastOrphans.
-        manualLinkSelectedBankSourceId = null;
-        manualLinkSelectedOrphanId = null;
+        manualLinkSelectedBankSourceIds = new Set();
+        manualLinkSelectedOrphanIds = new Set();
         renderManualLinkSection();
     } catch (e) {
         list.innerHTML = '';
@@ -1186,6 +1200,36 @@ function handleLabelFilterChange(value) {
     renderMmOrphansList();
 }
 
+// Propuesta #16 (BACKLOG.md): traduce el status de una propuesta a la categoría de badge del
+// resumen a la que pertenece -- el mismo mapeo que ya usaba renderReconciliationSummary() para
+// contar, ahora reutilizado también para filtrar. Los huérfanos de MM no tienen "status" propio
+// -- pertenecen siempre (y solo) a la categoría 'mmOnly', tratados aparte en
+// matchesActiveSummaryFilters() de más abajo.
+function summaryCategoryForProposal(p) {
+    if (p.status === 'exact_match' || p.status === 'reconciled') return 'matched';
+    if (p.status === 'suggested_match' || p.status === 'probable_match') return 'pending';
+    if (p.status === 'new') return 'bankOnly';
+    return null;
+}
+
+// Sin filtros activos (conjunto vacío) se muestra todo, igual que antes de esta propuesta -- los
+// badges empiezan "sin pulsar" y no ocultan nada por sí solos.
+function matchesActiveSummaryFilters(p) {
+    if (activeSummaryFilters.size === 0) return true;
+    return activeSummaryFilters.has(summaryCategoryForProposal(p));
+}
+
+function toggleSummaryFilter(kind) {
+    if (activeSummaryFilters.has(kind)) {
+        activeSummaryFilters.delete(kind);
+    } else {
+        activeSummaryFilters.add(kind);
+    }
+    renderReconciliationSummary();
+    renderProposalsList();
+    renderMmOrphansList();
+}
+
 function renderProposalsList() {
     const list = document.getElementById('proposalsList');
     list.innerHTML = '';
@@ -1197,7 +1241,7 @@ function renderProposalsList() {
     const visible = (currentLabelFilter === 'all'
         ? lastProposals
         : lastProposals.filter(p => p.source_label === currentLabelFilter)
-    ).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+    ).filter(matchesActiveSummaryFilters).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
 
     visible.forEach(p => {
         const card = document.createElement('div');
@@ -1280,10 +1324,14 @@ function renderMmOrphansList() {
     }
     section.style.display = 'block';
 
+    // A diferencia de una propuesta, un huérfano de MM solo pertenece a la categoría 'mmOnly' del
+    // resumen -- si hay algún filtro activo y no incluye 'mmOnly', ningún huérfano puede
+    // "cuadrar" ni ser "solo del banco", así que la lista completa queda oculta.
     const visible = (currentLabelFilter === 'all'
         ? lastOrphans
         : lastOrphans.filter(o => o.source_label === currentLabelFilter)
-    ).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+    ).filter(() => activeSummaryFilters.size === 0 || activeSummaryFilters.has('mmOnly'))
+     .slice().sort((a, b) => new Date(b.date) - new Date(a.date));
 
     visible.forEach(o => {
         const card = document.createElement('div');
@@ -1325,12 +1373,21 @@ function renderReconciliationSummary() {
     const bankOnly = lastProposals.filter(p => p.status === 'new').length;
     const mmOnly = (lastOrphans || []).length;
     bar.style.display = 'flex';
-    bar.innerHTML = `
-        <span class="badge badge-success" title="Movimientos del banco que coinciden con Money Manager (ya conciliados o coincidencia exacta).">✅ ${matched} cuadran</span>
-        <span class="badge badge-warning" title="Movimientos del banco con varios candidatos posibles en Money Manager, pendientes de que elijas uno.">❓ ${pending} por revisar</span>
-        <span class="badge badge-danger" title="Movimientos del banco que no existen todavía en Money Manager.">🏦 ${bankOnly} solo en el banco</span>
-        <span class="badge badge-warning" title="Movimientos en Money Manager (dentro de la cuenta/periodo de algún fichero con cuenta asociada) que no aparecen en ningún extracto subido.">📱 ${mmOnly} solo en Money Manager</span>
+    // Propuesta #16 (BACKLOG.md): cada badge es ahora un <button> que alterna su categoría dentro
+    // de `activeSummaryFilters` (multiseleccionable, no excluyente) y filtra proposalsList/
+    // mmOrphansList en combinación con el filtro de etiqueta y la búsqueda Ctrl+F -- ver
+    // toggleSummaryFilter()/matchesActiveSummaryFilters(). La clase 'active' (estilo en style.css)
+    // es la única señal visual de qué filtro(s) están aplicados ahora mismo.
+    const btn = (kind, colorClass, icon, count, label, title) => `
+        <button type="button" class="badge ${colorClass} badge-filter ${activeSummaryFilters.has(kind) ? 'active' : ''}"
+                title="${title}" onclick="toggleSummaryFilter('${kind}')">${icon} ${count} ${label}</button>
     `;
+    bar.innerHTML = [
+        btn('matched', 'badge-success', '✅', matched, 'cuadran', 'Movimientos del banco que coinciden con Money Manager (ya conciliados o coincidencia exacta). Clic para filtrar.'),
+        btn('pending', 'badge-warning', '❓', pending, 'por revisar', 'Movimientos del banco con varios candidatos posibles en Money Manager, pendientes de que elijas uno. Clic para filtrar.'),
+        btn('bankOnly', 'badge-danger', '🏦', bankOnly, 'solo en el banco', 'Movimientos del banco que no existen todavía en Money Manager. Clic para filtrar.'),
+        btn('mmOnly', 'badge-warning', '📱', mmOnly, 'solo en Money Manager', 'Movimientos en Money Manager (dentro de la cuenta/periodo de algún fichero con cuenta asociada) que no aparecen en ningún extracto subido. Clic para filtrar.'),
+    ].join('');
 }
 
 function prefillAddModal(date, amount, content, defaultAccount) {
@@ -1489,17 +1546,25 @@ async function confirmMatch(sourceId, candId) {
         // estado local quede coherente con el del backend en cualquier re-render.
         // Captura ANTES de sobreescribir -- undoLastReconciliation() (Propuesta #14) la usa para
         // restaurar la tarjeta al instante si el usuario deshace esto en la misma sesión.
+        // Propuesta #16: formato unificado de lastConfirmedAction (arrays) para que
+        // undoLastReconciliation() trate igual un enlace 1:1 (confirmMatch(), esta función) y un
+        // enlace N:M (confirmManualLink()) -- aquí siempre listas de un solo elemento.
         lastConfirmedAction = {
-            key: data.key,
-            proposalSourceId: sourceId,
-            previousState: { status: proposal.status, confidence: proposal.confidence, suggested_mm_ref: proposal.suggested_mm_ref, candidates: proposal.candidates },
-            orphanRemoved: null,
+            keys: [data.key],
+            bankChanges: [{ sourceId, previousState: { status: proposal.status, confidence: proposal.confidence, suggested_mm_ref: proposal.suggested_mm_ref, reconciled_mm_ids: proposal.reconciled_mm_ids, candidates: proposal.candidates } }],
+            orphansRemoved: [],
         };
         proposal.status = 'reconciled';
         proposal.confidence = 100;
         proposal.suggested_mm_ref = candId;
+        proposal.reconciled_mm_ids = [candId];
         proposal.candidates = [];
         renderProposalsList();
+        // Propuesta #16 (BACKLOG.md): faltaba -- confirmManualLink()/undoLastReconciliation() ya
+        // recalculaban el resumen tras mutar el estado local, pero confirmMatch() no, así que los
+        // badges de #reconciliationSummaryBar quedaban desactualizados (mismo recuento de "por
+        // revisar"/"cuadran" de antes de confirmar) hasta el siguiente análisis completo.
+        renderReconciliationSummary();
     } catch (e) {
         alert("Error crítico confirmando match: " + e.message);
     }
@@ -1520,8 +1585,8 @@ function toggleManualLinkMode() {
     manualLinkMode = !manualLinkMode;
     const section = document.getElementById('manualLinkSection');
     const btn = document.getElementById('manualLinkToggleBtn');
-    manualLinkSelectedBankSourceId = null;
-    manualLinkSelectedOrphanId = null;
+    manualLinkSelectedBankSourceIds = new Set();
+    manualLinkSelectedOrphanIds = new Set();
     if (manualLinkMode) {
         section.style.display = 'block';
         btn.classList.remove('btn-secondary');
@@ -1534,13 +1599,17 @@ function toggleManualLinkMode() {
     }
 }
 
+// Propuesta #16 (BACKLOG.md): selección múltiple en checkboxes (antes radios de un único
+// elemento) -- alterna la pertenencia al Set en vez de sustituir un único id seleccionado.
 function selectManualLinkBank(sourceId) {
-    manualLinkSelectedBankSourceId = sourceId;
+    if (manualLinkSelectedBankSourceIds.has(sourceId)) manualLinkSelectedBankSourceIds.delete(sourceId);
+    else manualLinkSelectedBankSourceIds.add(sourceId);
     renderManualLinkSection();
 }
 
 function selectManualLinkOrphan(orphanId) {
-    manualLinkSelectedOrphanId = orphanId;
+    if (manualLinkSelectedOrphanIds.has(orphanId)) manualLinkSelectedOrphanIds.delete(orphanId);
+    else manualLinkSelectedOrphanIds.add(orphanId);
     renderManualLinkSection();
 }
 
@@ -1570,6 +1639,22 @@ function computeDuplicateOrdinals(items, keyFn) {
     });
 }
 
+// Propuesta #16 (BACKLOG.md): suma con signo tal cual de los importes bancarios seleccionados --
+// el importe del banco SÍ lleva un convenio de signo fiable (el del propio extracto), a diferencia
+// de mm_orphans[].amount (ver más abajo).
+function sumSelectedBankAmounts(bankItems) {
+    return bankItems.filter(p => manualLinkSelectedBankSourceIds.has(p.source_id)).reduce((s, p) => s + p.amount, 0);
+}
+
+// A diferencia del banco, `mm_orphans[].amount` no lleva un convenio de signo consistente en los
+// datos reales de Money Manager (confirmado contra datos reales -- ver comentario histórico más
+// abajo en el ordenamiento por cercanía): sumar con signo mezclaría magnitudes que en realidad
+// deberían compararse en valor absoluto. Se suman magnitudes absolutas -- el sumador existe para
+// "comparar a ojo" (tal y como pide la propuesta), no para una igualdad matemática con signo.
+function sumSelectedOrphanAmounts(orphanItems) {
+    return orphanItems.filter(o => manualLinkSelectedOrphanIds.has(o.id)).reduce((s, o) => s + Math.abs(o.amount), 0);
+}
+
 function renderManualLinkSection() {
     if (!manualLinkMode) return;
     const bankList = document.getElementById('manualLinkBankList');
@@ -1577,23 +1662,20 @@ function renderManualLinkSection() {
     const confirmBtn = document.getElementById('manualLinkConfirmBtn');
 
     const bankItems = lastProposals.filter(p => p.status === 'new');
-    const selectedBank = bankItems.find(p => p.source_id === manualLinkSelectedBankSourceId) || null;
+    const selectedBankItems = bankItems.filter(p => manualLinkSelectedBankSourceIds.has(p.source_id));
 
-    // Mejora de usabilidad sugerida en la propuesta: con un movimiento del banco seleccionado,
-    // ordena los huérfanos de MM por cercanía de importe en vez de dejarlos solo por fecha -- no
-    // obliga a buscar a ojo en una lista larga. Bug real (BACKLOG.md): comparar los importes
-    // directamente (con signo) estaba roto porque `mm_orphans[].amount` no lleva un convenio de
-    // signo consistente en los datos reales de Money Manager (algunas filas vienen en positivo,
-    // otras en negativo, para el mismo tipo de movimiento -- confirmado contra datos reales), a
-    // diferencia del importe del banco, que siempre lleva el signo real del extracto. Comparar
-    // ambos tal cual daba la MAYOR distancia posible justo para las coincidencias reales (p.ej.
-    // un huérfano de +14,70€ contra un cargo de banco de -14,70€, la misma compra), hundiéndolas
-    // en mitad de la lista en vez de arriba -- con solo ~6-7 filas visibles a la vez (scroll de
-    // 320px), esto se percibía como que el huérfano "desaparecía". Comparar por MAGNITUD absoluta
-    // en ambos lados es correcto independientemente del convenio de signo de cada uno.
+    // Mejora de usabilidad sugerida en la propuesta: con algún movimiento del banco seleccionado,
+    // ordena los huérfanos de MM por cercanía de importe (a la SUMA de lo ya marcado en el banco)
+    // en vez de dejarlos solo por fecha -- no obliga a buscar a ojo en una lista larga. Bug real
+    // (BACKLOG.md): comparar los importes directamente (con signo) estaba roto porque
+    // `mm_orphans[].amount` no lleva un convenio de signo consistente en los datos reales de Money
+    // Manager (algunas filas vienen en positivo, otras en negativo, para el mismo tipo de
+    // movimiento -- confirmado contra datos reales), a diferencia del importe del banco, que
+    // siempre lleva el signo real del extracto. Comparar por MAGNITUD absoluta en ambos lados es
+    // correcto independientemente del convenio de signo de cada uno.
     let orphanItems = (lastOrphans || []).slice();
-    if (selectedBank) {
-        const bankMagnitude = Math.abs(selectedBank.amount);
+    if (selectedBankItems.length > 0) {
+        const bankMagnitude = Math.abs(sumSelectedBankAmounts(bankItems));
         orphanItems.sort((a, b) => Math.abs(Math.abs(a.amount) - bankMagnitude) - Math.abs(Math.abs(b.amount) - bankMagnitude));
     } else {
         orphanItems.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -1605,9 +1687,10 @@ function renderManualLinkSection() {
         const dupTag = dup
             ? `<span class="badge badge-warning" style="font-size:0.7rem;" title="Hay ${dup.total} movimientos del banco con esta misma fecha, importe y descripción -- revisa cuál es cuál antes de confirmar (p.ej. dos compras idénticas el mismo día).">🔢 ${dup.ordinal}/${dup.total}</span>`
             : '';
+        const checked = manualLinkSelectedBankSourceIds.has(p.source_id);
         return `
-        <label class="manual-link-row ${manualLinkSelectedBankSourceId === p.source_id ? 'manual-link-row-selected' : ''}">
-            <input type="radio" name="manualLinkBank" value="${p.source_id}" ${manualLinkSelectedBankSourceId === p.source_id ? 'checked' : ''} onchange="selectManualLinkBank('${p.source_id}')">
+        <label class="manual-link-row ${checked ? 'manual-link-row-selected' : ''}">
+            <input type="checkbox" value="${p.source_id}" ${checked ? 'checked' : ''} onchange="selectManualLinkBank('${p.source_id}')">
             <span class="manual-link-row-text">
                 <strong>${p.date}</strong> · ${formatCurrency(p.amount)}
                 <span class="manual-link-row-desc">${p.description}</span>
@@ -1620,20 +1703,22 @@ function renderManualLinkSection() {
 
     // Fila reestructurada en div > (label + botón), no solo <label>, para poder meter el botón
     // "Editar" (Propuesta #15) como hermano del label en vez de anidado dentro de él -- un botón
-    // anidado en un <label> reactiva también el radio asociado al hacer clic (comportamiento
+    // anidado en un <label> reactiva también el checkbox asociado al hacer clic (comportamiento
     // estándar de <label>), lo que habría marcado el huérfano como seleccionado sin querer al
     // pulsar "editar". Las filas del banco (arriba) no lo necesitan y se quedan como <label> solo.
     const orphanOrdinals = computeDuplicateOrdinals(orphanItems, o => `${o.date}|${o.amount}|${(o.description || '').trim()}|${o.category || ''}`);
     orphanList.innerHTML = orphanItems.length ? orphanItems.map((o, idx) => {
-        const closeAmount = !!(selectedBank && Math.abs(Math.abs(o.amount) - Math.abs(selectedBank.amount)) < 0.01);
+        const bankMagnitude = selectedBankItems.length > 0 ? Math.abs(sumSelectedBankAmounts(bankItems)) : null;
+        const closeAmount = bankMagnitude !== null && Math.abs(Math.abs(o.amount) - bankMagnitude) < 0.01;
         const dup = orphanOrdinals[idx];
         const dupTag = dup
             ? `<span class="badge badge-warning" style="font-size:0.7rem;" title="Hay ${dup.total} registros de Money Manager con esta misma fecha, importe y descripción -- revisa cuál es cuál antes de confirmar.">🔢 ${dup.ordinal}/${dup.total}</span>`
             : '';
+        const checked = manualLinkSelectedOrphanIds.has(o.id);
         return `
-        <div class="manual-link-row ${manualLinkSelectedOrphanId === o.id ? 'manual-link-row-selected' : ''} ${closeAmount ? 'manual-link-row-suggested' : ''}">
+        <div class="manual-link-row ${checked ? 'manual-link-row-selected' : ''} ${closeAmount ? 'manual-link-row-suggested' : ''}">
             <label class="manual-link-row-main">
-                <input type="radio" name="manualLinkOrphan" value="${o.id}" ${manualLinkSelectedOrphanId === o.id ? 'checked' : ''} onchange="selectManualLinkOrphan('${o.id}')">
+                <input type="checkbox" value="${o.id}" ${checked ? 'checked' : ''} onchange="selectManualLinkOrphan('${o.id}')">
                 <span class="manual-link-row-text">
                     <strong>${o.date}</strong> · ${formatCurrency(o.amount)}
                     <span class="manual-link-row-desc">${o.description}${o.category ? ` · ${o.category}` : ''}</span>
@@ -1647,27 +1732,148 @@ function renderManualLinkSection() {
     `;
     }).join('') : '<p class="text-muted" style="padding:10px;">No hay movimientos de Money Manager sin equivalente en esta tanda.</p>';
 
-    confirmBtn.disabled = !(manualLinkSelectedBankSourceId && manualLinkSelectedOrphanId);
+    renderManualLinkSums(bankItems, orphanItems);
+    confirmBtn.disabled = !(manualLinkSelectedBankSourceIds.size > 0 && manualLinkSelectedOrphanIds.size > 0);
 }
 
-async function confirmManualLink() {
-    const bankProposal = lastProposals.find(p => p.source_id === manualLinkSelectedBankSourceId);
-    const orphan = (lastOrphans || []).find(o => String(o.id) === String(manualLinkSelectedOrphanId));
-    if (!bankProposal || !orphan) {
-        alert("Selecciona un movimiento del banco y uno de Money Manager antes de confirmar.");
+// Propuesta #16 (BACKLOG.md): sumador en tiempo real de ambos lados, para comparar a ojo mientras
+// se seleccionan filas -- y aviso no bloqueante (no impide confirmar) si al terminar de
+// seleccionar las sumas no coinciden exactamente (tolerancia de 1 céntimo, igual que el resto de
+// comparaciones de importe de este proyecto).
+function renderManualLinkSums(bankItems, orphanItems) {
+    const sumsEl = document.getElementById('manualLinkSums');
+    const warningEl = document.getElementById('manualLinkMismatchWarning');
+    const bankCount = manualLinkSelectedBankSourceIds.size;
+    const orphanCount = manualLinkSelectedOrphanIds.size;
+
+    if (bankCount === 0 && orphanCount === 0) {
+        sumsEl.innerHTML = '';
+        warningEl.style.display = 'none';
         return;
     }
 
+    const bankSum = sumSelectedBankAmounts(bankItems);
+    const orphanSum = sumSelectedOrphanAmounts(orphanItems);
+    sumsEl.innerHTML = `
+        <div class="manual-link-sum-col">Banco (${bankCount} seleccionado${bankCount === 1 ? '' : 's'}): <span class="manual-link-sum-value">${formatCurrency(bankSum)}</span></div>
+        <div class="manual-link-sum-col">Money Manager (${orphanCount} seleccionado${orphanCount === 1 ? '' : 's'}): <span class="manual-link-sum-value">${formatCurrency(orphanSum)}</span></div>
+    `;
+
+    const mismatch = bankCount > 0 && orphanCount > 0 && Math.abs(Math.abs(bankSum) - orphanSum) >= 0.01;
+    if (mismatch) {
+        const diff = Math.abs(Math.abs(bankSum) - orphanSum);
+        warningEl.style.display = 'block';
+        warningEl.innerHTML = `⚠️ Las sumas no coinciden exactamente (diferencia de ${formatCurrency(diff)}). Puedes confirmar igualmente -- es una conciliación informal, no tiene por qué cuadrar al céntimo -- y se te ofrecerá añadir una observación a los registros de Money Manager con el detalle de qué movimientos del banco representa.`;
+    } else {
+        warningEl.style.display = 'none';
+    }
+}
+
+// Propuesta #16 (BACKLOG.md): añade una observación a uno o varios registros de Money Manager,
+// EXPLÍCITAMENTE pedida por el usuario (nunca automática/silenciosa) tras un enlace N:M cuyas
+// sumas no cuadraban exactamente -- ver confirmManualLink(). Reutiliza moneyBook/update, el mismo
+// mecanismo de escritura ya verificado en submitTransaction(), añadiendo el texto al `mbContent`
+// existente sin tocar el resto de campos -- incluye mcid/mcscid resueltos por nombre contra
+// categoryMapData (Bug #2, BACKLOG.md: sin ellos el móvil guarda la categoría como "None"). Las
+// transferencias (inOutCode "3"/"4") usan un endpoint y campos totalmente distintos
+// (moneyBook/moveAsset, ver CLAUDE.md) -- se excluyen aquí y se le pide al usuario que las edite a
+// mano desde "Ver Registro Asociado" en vez de arriesgarse a corromper una transferencia real.
+async function appendNoteToMmRecords(mmIds, noteText) {
+    const results = [];
+    for (const mmId of mmIds) {
+        let t = transactionsData.find(x => String(x.id) === String(mmId));
+        if (!t) t = await fetchTransactionById(mmId, null);
+        if (!t) {
+            results.push({ mmId, ok: false, reason: 'No se encontró el registro.' });
+            continue;
+        }
+        if (t.inOutCode === '3' || t.inOutCode === '4') {
+            results.push({ mmId, ok: false, reason: 'Es una transferencia -- añádela a mano desde "Ver Registro Asociado".' });
+            continue;
+        }
+
+        let datePart = '', timePart = '12:00';
+        if (t.mbDate) {
+            const parts = t.mbDate.includes('T') ? t.mbDate.split('T') : t.mbDate.split(' ');
+            datePart = parts[0];
+            if (parts.length > 1) timePart = parts[1].substring(0, 5);
+        }
+
+        const typeStr = t.inOutType === 'Ingreso' ? 'Ingreso' : 'Gasto';
+        const inOutCodeMap = { 'Gasto': '1', 'Ingreso': '0' };
+        const newContent = `${t.mbContent || ''} [${noteText}]`.trim();
+
+        const payload = new URLSearchParams();
+        payload.append('inOutType', typeStr);
+        payload.append('inOutCode', inOutCodeMap[typeStr]);
+        payload.append('mbDate', `${datePart} ${timePart}:00`);
+        payload.append('mbContent', newContent);
+        payload.append('mbCash', Math.abs(t.mbCash || 0));
+        payload.append('assetId', t.assetId);
+        payload.append('payType', getAssetName(t.assetId, ''));
+        if (t.mbCategory) payload.append('mbCategory', t.mbCategory);
+        if (t.subCategory) payload.append('subCategory', t.subCategory);
+        const catMap = (typeStr === 'Ingreso' ? categoryMapData.income : categoryMapData.expense) || {};
+        const catEntry = catMap[t.mbCategory];
+        if (catEntry) {
+            payload.append('mcid', catEntry.mcid);
+            if (t.subCategory && catEntry.subs[t.subCategory]) payload.append('mcscid', catEntry.subs[t.subCategory]);
+        }
+        payload.append('id', mmId);
+
+        try {
+            const resp = await fetch('/api/proxy/moneyBook/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: payload.toString(),
+            });
+            const text = await resp.text();
+            const ok = text === 'true' || text.includes('success:true') || text.includes('success') || resp.ok;
+            results.push({ mmId, ok });
+        } catch (e) {
+            results.push({ mmId, ok: false, reason: e.message });
+        }
+    }
+    return results;
+}
+
+// Propuesta #16 (BACKLOG.md): enlace N:M -- varias líneas del banco seleccionadas (checkboxes) con
+// varios registros de Money Manager seleccionados, en vez del 1:1 original. Reutiliza
+// /api/reconciliations/confirm-group (una entrada por línea de banco, todas comparten group_id y
+// la lista completa de mm_ids -- ver confirm_group() en reconciliation_store.py), NUNCA escribe en
+// Money Manager como PARTE de la conciliación en sí (igual que el resto de este modo) -- la
+// observación opcional de más abajo es una acción EXPLÍCITA aparte, solo si el usuario la acepta.
+async function confirmManualLink() {
+    const bankItems = lastProposals.filter(p => p.status === 'new');
+    const selectedBankProposals = bankItems.filter(p => manualLinkSelectedBankSourceIds.has(p.source_id));
+    const selectedOrphans = (lastOrphans || []).filter(o => manualLinkSelectedOrphanIds.has(o.id));
+    if (selectedBankProposals.length === 0 || selectedOrphans.length === 0) {
+        alert("Selecciona al menos un movimiento del banco y uno de Money Manager antes de confirmar.");
+        return;
+    }
+
+    const bankSum = sumSelectedBankAmounts(bankItems);
+    const orphanSum = sumSelectedOrphanAmounts(selectedOrphans);
+    const mismatch = Math.abs(Math.abs(bankSum) - orphanSum) >= 0.01;
+    if (mismatch) {
+        const diff = Math.abs(Math.abs(bankSum) - orphanSum);
+        if (!confirm(`Las sumas no coinciden exactamente (banco: ${formatCurrency(bankSum)}, Money Manager: ${formatCurrency(orphanSum)}, diferencia de ${formatCurrency(diff)}).\n\n¿Confirmar el enlace igualmente? Es una conciliación informal, no tiene por qué cuadrar al céntimo.`)) {
+            return;
+        }
+    }
+
+    const mmIds = selectedOrphans.map(o => o.id);
+    const bankLines = selectedBankProposals.map(p => ({ date: p.date, amount: p.amount, description: p.description }));
+    const note = mismatch
+        ? `Conciliación N:M (suma no exacta: banco ${formatCurrency(bankSum)} vs MM ${formatCurrency(orphanSum)}). Movimientos de banco: ` +
+          bankLines.map(l => `${l.date} ${formatCurrency(l.amount)} "${l.description.trim()}"`).join('; ')
+        : null;
+
     try {
-        const resp = await fetch('/api/reconciliations/confirm', {
+        const resp = await fetch('/api/reconciliations/confirm-group', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                date: bankProposal.date,
-                amount: bankProposal.amount,
-                description: bankProposal.description,
-                mm_id: orphan.id
-            })
+            body: JSON.stringify({ bank_lines: bankLines, mm_ids: mmIds, note }),
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
@@ -1677,32 +1883,54 @@ async function confirmManualLink() {
 
         // Mismo patrón que confirmMatch(): reflejar en el estado local el mismo resultado que
         // calcularía analyze_excel() al re-analizar, para no depender de volver a subir el Excel.
-        // El huérfano se quita de lastOrphans aquí mismo -- el backend solo lo excluiría en el
+        // Los huérfanos se quitan de lastOrphans aquí mismo -- el backend solo los excluiría en el
         // PRÓXIMO análisis (excluded_mm_ids se recalcula a partir de data/reconciliations.json),
         // no de forma retroactiva sobre esta respuesta ya recibida.
         // Captura ANTES de mutar nada -- undoLastReconciliation() (Propuesta #14) necesita tanto
-        // el estado previo de la propuesta como el objeto huérfano completo (se descarta de
-        // lastOrphans más abajo, así que sin esta copia no habría forma de reinsertarlo tal cual).
+        // el estado previo de cada propuesta como los huérfanos completos (se descartan de
+        // lastOrphans más abajo, así que sin esta copia no habría forma de reinsertarlos tal cual).
         lastConfirmedAction = {
-            key: data.key,
-            proposalSourceId: manualLinkSelectedBankSourceId,
-            previousState: { status: bankProposal.status, confidence: bankProposal.confidence, suggested_mm_ref: bankProposal.suggested_mm_ref, candidates: bankProposal.candidates },
-            orphanRemoved: { ...orphan },
+            keys: data.keys,
+            bankChanges: selectedBankProposals.map(p => ({
+                sourceId: p.source_id,
+                previousState: { status: p.status, confidence: p.confidence, suggested_mm_ref: p.suggested_mm_ref, reconciled_mm_ids: p.reconciled_mm_ids, candidates: p.candidates },
+            })),
+            orphansRemoved: selectedOrphans.map(o => ({ ...o })),
         };
-        bankProposal.status = 'reconciled';
-        bankProposal.confidence = 100;
-        bankProposal.suggested_mm_ref = orphan.id;
-        bankProposal.candidates = [];
-        lastOrphans = (lastOrphans || []).filter(o => String(o.id) !== String(orphan.id));
+        selectedBankProposals.forEach(p => {
+            p.status = 'reconciled';
+            p.confidence = 100;
+            p.suggested_mm_ref = mmIds[0];
+            p.reconciled_mm_ids = mmIds;
+            p.candidates = [];
+        });
+        const removedIds = new Set(mmIds.map(String));
+        lastOrphans = (lastOrphans || []).filter(o => !removedIds.has(String(o.id)));
 
-        manualLinkSelectedBankSourceId = null;
-        manualLinkSelectedOrphanId = null;
+        manualLinkSelectedBankSourceIds = new Set();
+        manualLinkSelectedOrphanIds = new Set();
 
         renderProposalsList();
         renderMmOrphansList();
         renderReconciliationSummary();
         renderManualLinkSection();
-        alert("Enlace manual confirmado -- vinculado localmente, no se ha escrito nada en Money Manager.");
+
+        if (mismatch) {
+            if (confirm("¿Añadir una observación a los registros de Money Manager implicados con el detalle de qué movimientos del banco representa esta suma?")) {
+                const results = await appendNoteToMmRecords(mmIds, note);
+                const failed = results.filter(r => !r.ok);
+                if (failed.length > 0) {
+                    alert(`Enlace confirmado. No se pudo añadir la observación a ${failed.length} de ${mmIds.length} registro(s): ` + failed.map(f => f.reason).join(' / '));
+                } else {
+                    alert("Enlace manual confirmado y observación añadida a Money Manager.");
+                }
+                await fetchTransactions();
+            } else {
+                alert("Enlace manual confirmado -- vinculado localmente, no se ha escrito nada en Money Manager.");
+            }
+        } else {
+            alert("Enlace manual confirmado -- vinculado localmente, no se ha escrito nada en Money Manager.");
+        }
     } catch (e) {
         alert("Error crítico confirmando el enlace: " + e.message);
     }
@@ -1735,12 +1963,21 @@ async function undoLastReconciliation() {
         return;
     }
 
-    // Entradas guardadas antes de que confirm() empezara a persistir date/amount/description
-    // (ver reconciliation_store.py) no las tienen -- degradar con el mm_id en vez de fallar.
-    const desc = last.date && last.amount !== undefined && last.description
-        ? `${last.date} · ${formatCurrency(last.amount)} · ${last.description}`
-        : `registro de Money Manager con id ${last.mm_id}`;
-    if (!confirm(`¿Deshacer la conciliación de:\n\n${desc}\n\nVolverá a aparecer como pendiente (el movimiento del banco como "Nuevo"/con dudas; si estaba enlazado a un huérfano de Money Manager, ese huérfano reaparecerá al volver a analizar el fichero).`)) {
+    // Propuesta #16: /api/reconciliations/last unificó su contrato a listas (`bank_lines`,
+    // `mm_ids`) para cubrir tanto un enlace 1:1 de toda la vida como un grupo N:M -- se listan
+    // todas las líneas de banco implicadas, no solo la primera. Entradas guardadas antes de que
+    // confirm() empezara a persistir date/amount/description (ver reconciliation_store.py) llegan
+    // aquí como bank_lines con esos campos a null -- se degradan a mostrar los mm_ids en vez de
+    // fallar.
+    const bankLines = last.bank_lines || [];
+    const validLines = bankLines.filter(l => l.date && l.amount !== undefined && l.amount !== null && l.description);
+    const desc = validLines.length === bankLines.length && validLines.length > 0
+        ? validLines.map(l => `${l.date} · ${formatCurrency(l.amount)} · ${l.description}`).join('\n')
+        : `${bankLines.length} línea(s) de banco vinculada(s) a Money Manager (${(last.mm_ids || []).join(', ')})`;
+    const groupNote = bankLines.length > 1 || (last.mm_ids || []).length > 1
+        ? `\n\n(Enlace N:M -- ${bankLines.length} línea(s) de banco y ${(last.mm_ids || []).length} registro(s) de Money Manager, se deshace todo junto).`
+        : '';
+    if (!confirm(`¿Deshacer la conciliación de:\n\n${desc}${groupNote}\n\nVolverá a aparecer como pendiente (el movimiento del banco como "Nuevo"/con dudas; si estaba enlazado a un huérfano de Money Manager, ese huérfano reaparecerá al volver a analizar el fichero).`)) {
         return;
     }
 
@@ -1753,15 +1990,22 @@ async function undoLastReconciliation() {
         }
 
         // Reversión instantánea y precisa solo si la propia acción se confirmó en esta sesión
-        // (lastConfirmedAction) Y coincide con lo que el backend acaba de deshacer (mismo `key` --
-        // podría no coincidir si el usuario deshizo algo confirmado en otra sesión/pestaña). Si no
-        // coincide, degradar a pedir un re-análisis en vez de arriesgarse a reconstruir un estado
-        // que no se conoce con certeza (candidatos originales, etc.).
-        if (lastConfirmedAction && lastConfirmedAction.key === data.removed.key) {
-            const proposal = lastProposals.find(p => p.source_id === lastConfirmedAction.proposalSourceId);
-            if (proposal) Object.assign(proposal, lastConfirmedAction.previousState);
-            if (lastConfirmedAction.orphanRemoved) {
-                lastOrphans = [...(lastOrphans || []), lastConfirmedAction.orphanRemoved];
+        // (lastConfirmedAction) Y coincide con lo que el backend acaba de deshacer (mismo
+        // conjunto de `keys` -- podría no coincidir si el usuario deshizo algo confirmado en otra
+        // sesión/pestaña). Si no coincide, degradar a pedir un re-análisis en vez de arriesgarse a
+        // reconstruir un estado que no se conoce con certeza (candidatos originales, etc.).
+        const removedKeys = (data.removed || []).map(e => e.key).slice().sort();
+        const localKeys = (lastConfirmedAction ? lastConfirmedAction.keys : []).slice().sort();
+        const sameGroup = lastConfirmedAction && removedKeys.length === localKeys.length &&
+            removedKeys.every((k, i) => k === localKeys[i]);
+
+        if (sameGroup) {
+            lastConfirmedAction.bankChanges.forEach(({ sourceId, previousState }) => {
+                const proposal = lastProposals.find(p => p.source_id === sourceId);
+                if (proposal) Object.assign(proposal, previousState);
+            });
+            if (lastConfirmedAction.orphansRemoved.length > 0) {
+                lastOrphans = [...(lastOrphans || []), ...lastConfirmedAction.orphansRemoved];
             }
             lastConfirmedAction = null;
             renderProposalsList();

@@ -164,6 +164,13 @@ header { display: flex; justify-content: space-between; align-items: center; mar
    (MM -> banco, no banco -> MM) -- ver CLAUDE.md. */
 .reconciliation-summary-bar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
 .reconciliation-summary-bar .badge { font-size: 0.85rem; padding: 6px 14px; }
+/* Propuesta #16 (BACKLOG.md): los badges de resumen son ahora botones-filtro multiseleccionables
+   -- misma apariencia que un badge normal en reposo (no clicado = no filtra nada), pero clicables
+   y con un estado "activo" claramente distinto (fondo relleno + anillo) para que se note qué
+   filtro(s) están aplicados sobre #proposalsList/#mmOrphansList ahora mismo. */
+.reconciliation-summary-bar .badge-filter { cursor: pointer; font: inherit; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+.reconciliation-summary-bar .badge-filter:hover { transform: translateY(-1px); }
+.reconciliation-summary-bar .badge-filter.active { box-shadow: 0 0 0 2px currentColor inset; font-weight: 600; }
 .mm-orphans-section { margin-top: 40px; padding-top: 30px; border-top: 1px dashed var(--glass-border); }
 .mm-orphans-section h3 { margin-bottom: 6px; }
 .mm-orphans-hint { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 15px; }
@@ -276,12 +283,23 @@ form input, form select { width: 100%; padding: 12px; background: rgba(0,0,0,0.3
    .manual-link-row-main es el <label> (radio + texto, clic para seleccionar); el botón "Editar"
    vive fuera de él, como hermano, para no reactivar el radio al pulsarlo (ver renderManualLinkSection()). */
 .manual-link-row-main { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; flex: 1; min-width: 0; }
-.manual-link-row input[type="radio"] { margin-top: 3px; flex-shrink: 0; }
+.manual-link-row input[type="radio"], .manual-link-row input[type="checkbox"] { margin-top: 3px; flex-shrink: 0; }
 .manual-link-row-text { display: flex; flex-direction: column; gap: 2px; font-size: 0.85rem; min-width: 0; }
 .manual-link-row-desc { color: var(--text-muted); }
 .manual-link-row-selected { border-color: rgba(65, 105, 225, 0.6); background: rgba(65, 105, 225, 0.1); }
 .manual-link-row-suggested { border-color: rgba(34, 197, 94, 0.5); }
 .manual-link-edit-btn { flex-shrink: 0; padding: 4px 8px; }
+
+/* Propuesta #16 (BACKLOG.md): enlace N:M -- sumador en tiempo real de ambos lados (checkboxes en
+   vez de radios, ver script.js) y aviso no bloqueante cuando las sumas no cuadran exactamente. */
+.manual-link-sums { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 12px; font-size: 0.85rem; }
+.manual-link-sum-col { padding: 8px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--glass-border); }
+.manual-link-sum-col .manual-link-sum-value { font-size: 1.1rem; font-weight: 600; }
+.manual-link-mismatch-warning {
+    margin-top: 12px; padding: 10px 14px; border-radius: 8px; font-size: 0.85rem;
+    background: rgba(234, 179, 8, 0.12); border: 1px solid rgba(234, 179, 8, 0.35); color: #facc15;
+}
+.manual-link-mismatch-warning button { margin-top: 8px; }
 
 @media (max-width: 768px) {
     .sidebar { width: 80px; padding: 20px 10px; }

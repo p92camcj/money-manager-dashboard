@@ -47,7 +47,7 @@ logger.addHandler(_file_handler)
 from backend.reconciliation import match_bank_transactions, build_mm_dataframe, find_mm_orphans
 from backend.reconciliation_store import (
     make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation,
-    get_last_confirmation, undo_last_confirmation,
+    entry_mm_ids, confirm_group, get_last_confirmation_group, undo_last_confirmation_group,
 )
 from backend.bank_statement_parser import parse_bank_statement, parse_bank_date, BankStatementFormatError
 from backend.budget_engine import BudgetEngine
@@ -403,7 +403,14 @@ def analyze_excel():
                 if confirmation:
                     p['status'] = 'reconciled'
                     p['confidence'] = 100
-                    p['suggested_mm_ref'] = confirmation['mm_id']
+                    # entry_mm_ids() cubre tanto enlaces 1:1 antiguos (`mm_id` suelto) como enlaces
+                    # N:M nuevos (Propuesta #16, `mm_ids` lista) -- suggested_mm_ref se queda con
+                    # el primero para no romper "Ver Registro Asociado" (un único registro, ya
+                    # verificado), reconciled_mm_ids lleva la lista completa para que el frontend
+                    # pueda distinguir un enlace N:M de uno simple si quiere mostrar los demás.
+                    ids = entry_mm_ids(confirmation)
+                    p['suggested_mm_ref'] = ids[0] if ids else None
+                    p['reconciled_mm_ids'] = ids
                     p['candidates'] = []
                     reconciled_count += 1
 
@@ -437,8 +444,10 @@ def analyze_excel():
             })
         # TODOS los mm_id ya conciliados en el store, no solo los de esta tanda -- una transacción
         # conciliada hace tiempo cuyo Excel original no se ha vuelto a subir hoy no debe reaparecer
-        # como falso huérfano.
-        excluded_mm_ids = {v['mm_id'] for v in reconciliations.values() if v.get('mm_id')}
+        # como falso huérfano. entry_mm_ids() cubre tanto `mm_id` (enlaces 1:1 antiguos) como
+        # `mm_ids` (Propuesta #16, enlaces N:M) -- un enlace N:M debe excluir TODOS los registros
+        # de MM del grupo, no solo el primero.
+        excluded_mm_ids = {mid for v in reconciliations.values() for mid in entry_mm_ids(v)}
         mm_orphans = find_mm_orphans(mm_df, file_contexts, excluded_mm_ids)
         logger.info(f"[analyze-excel] Arqueo de caja: {len(mm_orphans)} huérfano(s) de Money Manager en {len(file_contexts)} fichero(s) con cuenta asociada")
 
@@ -472,27 +481,78 @@ def confirm_reconciliation_endpoint():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/reconciliations/confirm-group', methods=['POST'])
+def confirm_reconciliation_group_endpoint():
+    """Propuesta #16 (BACKLOG.md): enlace manual N:M -- varias líneas del Excel del banco con
+    varios registros ya existentes en Money Manager (p.ej. tres abonos de intereses del banco que
+    en conjunto son un único "Ingresos por intereses" en MM, o al revés). NUNCA escribe en el
+    móvil, igual que /api/reconciliations/confirm -- ver confirm_group() en reconciliation_store.py
+    para el formato de persistencia (una entrada por línea de banco, todas comparten group_id).
+
+    Body: `bank_lines` (lista de {date, amount, description}, al menos 1) y `mm_ids` (lista de ids
+    reales de Money Manager, al menos 1) -- se acepta 1 elemento en cualquiera de los dos lados
+    (un enlace "N:M" con N=1 o M=1 es simplemente un enlace 1:1 con metadatos de grupo, sigue
+    funcionando igual). `note` opcional (texto libre, p.ej. detalle de qué líneas de banco
+    representa la suma) -- se persiste tal cual, nunca se escribe en el móvil desde aquí."""
+    data = request.json or {}
+    bank_lines = data.get('bank_lines') or []
+    mm_ids = data.get('mm_ids') or []
+    note = data.get('note')
+
+    if not bank_lines or not mm_ids:
+        return jsonify({"error": "Faltan bank_lines y/o mm_ids (al menos uno de cada)."}), 400
+    for line in bank_lines:
+        if not line.get('date') or line.get('amount') is None or not line.get('description'):
+            return jsonify({"error": "Cada elemento de bank_lines necesita date, amount y description."}), 400
+
+    try:
+        group_id, keys = confirm_group(bank_lines, mm_ids, note=note)
+        logger.info(f"[reconciliations] Confirmado grupo {group_id} | {len(bank_lines)} línea(s) de banco <-> {len(mm_ids)} registro(s) de MM {mm_ids}")
+        return jsonify({"status": "success", "group_id": group_id, "keys": keys})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/reconciliations/last', methods=['GET'])
 def get_last_reconciliation_endpoint():
     """Propuesta #14 (BACKLOG.md), deshacer: info de la conciliación confirmada más reciente
     (por 'confirmar match'/'confirmar candidato' o por el modo de enlace manual -- ambos escriben
     aquí igual, ver /api/reconciliations/confirm), para que el frontend pueda mostrarle al usuario
-    QUÉ se va a deshacer antes de pedir confirmación. `{last: null}` si el almacén está vacío."""
-    key, entry = get_last_confirmation()
-    if key is None:
+    QUÉ se va a deshacer antes de pedir confirmación. `{last: null}` si el almacén está vacío.
+
+    Propuesta #16: si la confirmación más reciente pertenece a un grupo N:M,
+    `get_last_confirmation_group()` devuelve TODAS sus entradas -- el contrato de esta respuesta
+    se unifica para siempre devolver listas (`bank_lines`, `mm_ids`), incluso para un enlace 1:1
+    de toda la vida (listas de un solo elemento), así el frontend tiene un único formato que
+    mostrar en el diálogo de confirmación de deshacer."""
+    keys, entries = get_last_confirmation_group()
+    if not keys:
         return jsonify({"last": None})
-    return jsonify({"last": {**entry, "key": key}})
+    bank_lines = [{"date": e.get("date"), "amount": e.get("amount"), "description": e.get("description")} for e in entries]
+    mm_ids = sorted({mid for e in entries for mid in entry_mm_ids(e)})
+    return jsonify({"last": {
+        "keys": keys,
+        "bank_lines": bank_lines,
+        "mm_ids": mm_ids,
+        "note": entries[0].get("note"),
+        "confirmed_at": entries[0].get("confirmed_at"),
+    }})
 
 @app.route('/api/reconciliations/undo', methods=['POST'])
 def undo_last_reconciliation_endpoint():
     """Deshace la última conciliación confirmada (la que devolvería GET /api/reconciliations/last
     en ese momento) -- solo la última, no un historial de deshacer con varios pasos. NUNCA toca
-    Money Manager: el vínculo era solo local, así que deshacerlo tampoco escribe nada allí."""
-    removed = undo_last_confirmation()
+    Money Manager: el vínculo era solo local, así que deshacerlo tampoco escribe nada allí.
+
+    Propuesta #16: si era un grupo N:M, deshace TODAS sus entradas (todas las líneas de banco del
+    grupo) como una única unidad -- ver undo_last_confirmation_group(). `removed` es siempre una
+    lista, incluso para un enlace 1:1 de toda la vida (lista de un solo elemento), mismo criterio
+    de unificación de contrato que GET /api/reconciliations/last."""
+    removed = undo_last_confirmation_group()
     if removed is None:
         return jsonify({"error": "No hay ninguna conciliación que deshacer."}), 404
-    logger.info(f"[reconciliations] Deshecho {removed.get('date')} | {removed.get('amount')} | "
-                f"{str(removed.get('description'))[:40]!r} -> mm_id={removed.get('mm_id')}")
+    for entry in removed:
+        logger.info(f"[reconciliations] Deshecho {entry.get('date')} | {entry.get('amount')} | "
+                    f"{str(entry.get('description'))[:40]!r} -> mm_ids={entry_mm_ids(entry)}")
     return jsonify({"status": "success", "removed": removed})
 
 @app.route('/api/budget-hierarchy', methods=['GET'])

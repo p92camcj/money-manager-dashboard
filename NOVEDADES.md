@@ -4,6 +4,16 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.15.0.54 - 2026-07-20
+
+- Los números de resumen en Conciliación ("✅ cuadran", "❓ por revisar", "🏦 solo en el banco",
+  "📱 solo en Money Manager") ahora son botones: pulsa uno o varios para filtrar la lista por ese
+  estado, combinable con el filtro de etiqueta y con el buscador.
+- "Enlazar manualmente" ahora permite marcar varios movimientos de banco y varios registros de
+  Money Manager a la vez (antes solo uno de cada), con una suma en tiempo real de ambos lados para
+  comparar a ojo. Si las sumas no coinciden exactamente, avisa (sin bloquear) y ofrece añadir una
+  nota a los registros de Money Manager explicando qué movimientos del banco representa.
+
 ## 0.14.1.53 - 2026-07-20
 
 - Corregido un fallo que impedía que la app reconociera correctamente las categorías al guardar

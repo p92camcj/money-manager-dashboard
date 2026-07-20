@@ -3,6 +3,42 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.15.0.54 - 2026-07-20
+
+Propuestas #19 y #20 del `BACKLOG.md`: badges de resumen de Conciliación como filtros
+multiseleccionables, y enlace manual N:M con sumador.
+
+- **Propuesta #19**: los badges de `#reconciliationSummaryBar` ("✅ cuadran", "❓ por revisar",
+  "🏦 solo en el banco", "📱 solo en Money Manager") pasan de texto a `<button>` que alternan
+  (`toggleSummaryFilter()`, `activeSummaryFilters` como `Set`, multiseleccionable) un filtro sobre
+  `#proposalsList`/`#mmOrphansList`, combinable en AND con el filtro de etiqueta y con el buscador
+  Ctrl+F. De paso, `confirmMatch()` ganó la llamada a `renderReconciliationSummary()` que le
+  faltaba (`confirmManualLink()`/`undoLastReconciliation()` ya la tenían) -- los badges quedaban
+  desactualizados tras confirmar un candidato hasta el siguiente análisis completo.
+- **Propuesta #20**: el modo de enlace manual (Propuesta #13) pasa de radios 1:1 a checkboxes con
+  selección múltiple en ambos lados, con un sumador en tiempo real (`#manualLinkSums` -- signo real
+  del banco, magnitud absoluta en Money Manager) y un aviso no bloqueante
+  (`#manualLinkMismatchWarning`) si las sumas no cuadran, con la opción explícita de añadir una
+  observación a los registros de MM implicados (`appendNoteToMmRecords()`, reutiliza
+  `moneyBook/update` con resolución de `mcid`/`mcscid` por nombre, igual que `submitTransaction()`
+  -- nunca escribe si el usuario no lo pide expresamente). Backend: `confirm_group()` en
+  `backend/reconciliation_store.py` (nuevo) crea una entrada por línea de banco compartiendo
+  `group_id` y la lista completa de `mm_ids`; `entry_mm_ids()` (nuevo) centraliza la lectura
+  compatible con enlaces 1:1 antiguos (`mm_id` suelto). Nuevo endpoint
+  `POST /api/reconciliations/confirm-group`. "Deshacer" pasa a tratar un grupo N:M como una sola
+  unidad (`get_last_confirmation_group()`/`undo_last_confirmation_group()`, sustituyen a las
+  versiones singulares); `GET /api/reconciliations/last`/`POST /api/reconciliations/undo`
+  unificaron su contrato a listas (`bank_lines`, `mm_ids`, `removed`), incluso para un enlace 1:1
+  de toda la vida.
+
+**Verificado en vivo contra el móvil real** (Chromium/Playwright): filtro de badge simple y
+combinado con etiqueta reducen `#proposalsList` a las tarjetas correctas; enlace N:M de 2 líneas
+de banco sintéticas con 2 huérfanos reales mostró el sumador y el aviso de mismatch con la
+diferencia exacta, el resumen se recalculó en caliente tras confirmar (69→71 cuadran, 2→0 solo en
+el banco, 30→28 solo en MM, sin volver a analizar el Excel), y "Deshacer" revirtió ambas líneas
+como una unidad, devolviendo el resumen exactamente a los valores originales y dejando
+`data/reconciliations.json` bit a bit igual que antes de la prueba. Cero errores de consola.
+
 ## 0.14.1.53 - 2026-07-20
 
 Bug #10 del `BACKLOG.md`: `clean_json()` (`app.py`) no cubría un valor entre comillas simples

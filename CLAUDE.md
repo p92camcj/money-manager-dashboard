@@ -468,6 +468,14 @@ solape en fechas con uno ya revisado.
 - **Qué se guarda por clave**: `mm_id` (id real/UUID de la transacción en Money Manager con la que
   se vinculó), `confirmed_at` (ISO 8601 UTC), y `status` (por ahora solo `"confirmed"`; el campo ya
   admite añadir `"dismissed"` en el futuro sin cambiar el formato).
+  - **Propuesta #20 (2026-07-20)**: un enlace N:M guarda `mm_ids` (lista, no `mm_id` suelto) con
+    TODOS los registros de MM del grupo, más `group_id` (para deshacer el grupo entero como una
+    unidad) y opcionalmente `note`. Las entradas de toda la vida con `mm_id` suelto NO se
+    migran/reescriben — `entry_mm_ids(entry)` en `reconciliation_store.py` es el único punto que
+    debe usarse para leer los ids de una entrada, cubre ambos formatos, y todo el código nuevo
+    (incluido el propio `confirm()` de un enlace 1:1 vía "Confirmar Este") sigue escribiendo el
+    formato antiguo sin cambios — ver "Enlace manual N:M con sumador" más abajo para el detalle
+    completo.
 - **Al analizar un Excel**: `POST /api/analyze-excel` calcula las propuestas con
   `match_bank_transactions()` como siempre, y **después** sobreescribe el `status` a `"reconciled"`
   para cualquier propuesta cuya clave ya exista en el almacén, usando el `mm_id` guardado como
@@ -855,6 +863,112 @@ resolverlos a mano.
   transacciones internas con el mismo texto pero id real distinto, ver "prorrateos internos
   automáticos" en la Propuesta #11) con idéntico resultado. Cero errores de consola en todo el
   recorrido.
+
+## Badges de resumen como filtros (Propuesta #19)
+
+Introducido 2026-07-20. Los badges de `#reconciliationSummaryBar` ("✅ N cuadran", "❓ N por
+revisar", "🏦 N solo en el banco", "📱 N solo en Money Manager") eran solo texto informativo. Ahora
+son `<button>` que alternan (multiseleccionable, no excluyente entre sí) un filtro por estado sobre
+`#proposalsList`/`#mmOrphansList`, combinable en AND con el filtro de etiqueta
+(`#proposalsFilterBar`) y con el buscador Ctrl+F.
+
+- **Estado**: `activeSummaryFilters` (`Set` de `'matched'|'pending'|'bankOnly'|'mmOnly'`), junto a
+  `currentLabelFilter` en el ciclo de vida — se resetea al analizar una tanda nueva
+  (`confirmUploadFiles()`), pero sobrevive a re-renders, cambios de etiqueta y confirmaciones
+  dentro de la misma tanda. Conjunto vacío == sin filtro de estado, se muestra todo (igual que
+  antes de esta propuesta).
+- **`toggleSummaryFilter(kind)`**: alterna la pertenencia al Set y vuelve a renderizar resumen +
+  ambas listas. `summaryCategoryForProposal(p)` traduce el `status` de una propuesta a su
+  categoría de badge (mismo mapeo que ya usaba `renderReconciliationSummary()` para contar, ahora
+  reutilizado también para filtrar); un huérfano de MM no tiene `status` propio y pertenece
+  siempre y solo a `'mmOnly'` — si hay algún filtro activo sin `'mmOnly'`, `renderMmOrphansList()`
+  oculta la lista completa.
+- **Recuento en caliente**: `renderReconciliationSummary()` ya se llamaba tras
+  `confirmManualLink()`/`undoLastReconciliation()`, pero **no** tras `confirmMatch()` — hueco real
+  detectado al implementar esta propuesta (los badges quedaban con el recuento de antes de
+  confirmar un candidato hasta el siguiente análisis completo), corregido añadiendo la llamada que
+  faltaba.
+- **Verificación en vivo (2026-07-20)**: con el móvil real y `samples/casa_julio_250626-180726.xls`
+  + un CSV sintético de apoyo, clic en "🏦 solo en el banco" reduce `#proposalsList` de 103 a 2
+  tarjetas (ambas con badge "Nuevo Movimiento"), el botón gana la clase `active`; clic otra vez
+  restaura las 103. Combinado con el filtro de etiqueta (`test_nm`) + el mismo badge, la lista se
+  acota correctamente a la intersección de ambos filtros. Cero errores de consola.
+
+## Enlace manual N:M con sumador (Propuesta #20)
+
+Introducido 2026-07-20. Amplía el modo de enlace manual (Propuesta #13, antes estrictamente 1:1
+con radio buttons) a selección múltiple en ambos lados. Casos motivadores reales: varios abonos de
+intereses del banco que en conjunto son un único registro de MM ("Remun. mes cta Sabadell" en tres
+movimientos ↔ un único "Ingresos por intereses positivos"), o al revés (varios movimientos de MM
+de una categoría cuya suma se aproxima a un único cargo de banco).
+
+- **Selección**: `manualLinkSelectedBankSourceIds`/`manualLinkSelectedOrphanIds` (Sets, antes un
+  único id por variable) — checkboxes en vez de radios en ambas columnas
+  (`renderManualLinkSection()`). El orden de huérfanos por cercanía de importe (ya existente desde
+  la Propuesta #13) pasa a compararse contra la **suma** de lo ya marcado en el banco, no contra
+  un único movimiento.
+- **Sumador en tiempo real** (`#manualLinkSums`, `renderManualLinkSums()`): banco con signo real
+  del extracto (`sumSelectedBankAmounts()`); Money Manager en magnitud absoluta
+  (`sumSelectedOrphanAmounts()`) por el mismo motivo ya documentado para el ordenamiento por
+  cercanía — `mm_orphans[].amount` no lleva un convenio de signo consistente en datos reales. Un
+  aviso no bloqueante (`#manualLinkMismatchWarning`) aparece si la diferencia de magnitud es ≥ 1
+  céntimo — no impide confirmar, es una conciliación informal.
+- **Persistencia — grupo N:M, no N entradas independientes** (`backend/reconciliation_store.py`):
+  `confirm_group(bank_lines, mm_ids, note=None)` crea **una entrada por línea de banco** (para que
+  `analyze_excel()` siga resolviendo cada línea por su propia `make_key()`, igual que un enlace
+  1:1), pero todas comparten un `group_id` nuevo (UUID) y el mismo `mm_ids` **completo** (lista
+  entera del grupo, no un id por entrada) — así cualquier línea de banco del grupo resuelve el
+  enlace completo, y el arqueo de caja excluye TODOS los `mm_ids` del grupo mirando cualquiera de
+  sus entradas. `entry_mm_ids(entry)` centraliza la compatibilidad hacia atrás: entradas antiguas
+  (anteriores a esta propuesta) guardan `mm_id` suelto; entradas nuevas guardan siempre `mm_ids`
+  (lista, incluso con un solo elemento) — todo llamante (`excluded_mm_ids` en `app.py`,
+  `suggested_mm_ref`/`reconciled_mm_ids` de una propuesta) pasa por esta función, nunca lee
+  `mm_id`/`mm_ids` directamente.
+- **Endpoint nuevo**: `POST /api/reconciliations/confirm-group` (`bank_lines`, `mm_ids`, `note`
+  opcional) — el 1:1 de "Confirmar Este" (`confirmMatch()`, candidatos de `suggested_match`/
+  `probable_match`) sigue usando el endpoint antiguo `/api/reconciliations/confirm` sin cambios;
+  solo el modo de enlace manual (`confirmManualLink()`) migró al nuevo, envolviendo en listas de
+  un elemento el caso 1:1 trivial.
+- **Deshacer como una sola unidad** (Propuesta #14 extendida): `get_last_confirmation_group()`/
+  `undo_last_confirmation_group()` sustituyen a las versiones singulares (eliminadas, sin
+  llamantes ya) — si la confirmación más reciente pertenece a un `group_id`, deshace TODAS sus
+  entradas a la vez (todas las líneas de banco del grupo), no solo la primera. `GET
+  /api/reconciliations/last`/`POST /api/reconciliations/undo` unificaron su contrato a **listas**
+  (`bank_lines`, `mm_ids`, `removed`) incluso para un enlace 1:1 de toda la vida (listas de un
+  elemento) — un único formato que el frontend sabe mostrar para ambos casos.
+  `lastConfirmedAction` en `static/script.js` se generalizó igual (`keys`/`bankChanges`/
+  `orphansRemoved`, todos arrays), y `confirmMatch()` también se migró a este formato (arrays de
+  un elemento) para que `undoLastReconciliation()` tenga un único código de reversión instantánea.
+- **Observación opcional en Money Manager cuando las sumas no cuadran** (`appendNoteToMmRecords()`
+  en `static/script.js`): tras confirmar un enlace con mismatch, se ofrece (vía `confirm()`, nunca
+  automático/silencioso) añadir una nota a los registros de MM implicados con el detalle de qué
+  líneas de banco representa la suma — reutiliza `moneyBook/update` (el mismo mecanismo ya
+  verificado de `submitTransaction()`), añadiendo el texto al `mbContent` existente y resolviendo
+  `mcid`/`mcscid` por nombre contra `categoryMapData` (Bug #2) para no romper la categoría.
+  Transferencias (`inOutCode` "3"/"4") se excluyen explícitamente — se le pide al usuario que las
+  edite a mano desde "Ver Registro Asociado", no arriesgarse a escribirlas por el endpoint
+  equivocado.
+- **Verificación en vivo (2026-07-20), contra el móvil real y datos reales**:
+  - Enlace N:M con datos reales: 2 líneas de banco sintéticas ("Remun. mes cta Sabadell TEST_NM",
+    1,85€ + 1,26€) enlazadas a 2 huérfanos reales de MM. Sumador mostró correctamente "Banco (2
+    seleccionados): 3,11 €" / "Money Manager (2 seleccionados): 5,08 €"; aviso de mismatch con la
+    diferencia exacta (1,97 €); tras confirmar (aceptando el aviso, declinando la nota), el resumen
+    recalculó en caliente sin volver a analizar el Excel: "cuadran" 69→71, "solo en el banco" 2→0,
+    "solo en Money Manager" 30→28. "Deshacer última conciliación" mostró correctamente las DOS
+    líneas de banco como una sola unidad ("Enlace N:M -- 2 línea(s) de banco y 2 registro(s) de
+    Money Manager") y, tras confirmar, el resumen volvió exactamente a 69/32/2/30. Cero errores de
+    consola. `data/reconciliations.json` quedó bit a bit igual que antes de la prueba tras el
+    deshacer.
+  - Escritura de observación (`appendNoteToMmRecords()`) verificada por separado sobre una
+    transacción real existente (`Mercadona`, `72,65€`, categoría `🍴 ALIMENTACIÓN` ·
+    `🛒 Supermercado`): tras añadir la nota, `mbContent` pasó a `"Mercadona [NOTA_PRUEBA...]"` con
+    `mcid`/`mcscid`/categoría intactos (no `"None"`) — confirmando que la categoría se preserva
+    correctamente. Restaurada al contenido/categoría original exacto inmediatamente después
+    (verificado con una lectura posterior) para no dejar rastro en datos reales del usuario. Esta
+    misma prueba fue la que destapó el bug de `clean_json()`/`getInitData` documentado más arriba
+    (sección "Lectura: `GET /moneyBook/getInitData`") — sin ese fix, `categoryMapData` estaba
+    vacío y la categoría se habría perdido (`"None"`), aunque el fallo no era de esta función en
+    sí sino de un problema previo no detectado en el parseo de `getInitData`.
 
 ## Aviso de conexión perdida con el móvil
 

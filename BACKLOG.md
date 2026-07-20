@@ -51,6 +51,41 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Propuesta #20: enlace manual N:M con sumador
+
+- **Resuelto:** 2026-07-20, versión `0.15.0.54`.
+- **Anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió.
+
+El modo de enlace manual (Propuesta #13) era estrictamente 1:1. Ahora admite selección múltiple
+(checkboxes) en ambos lados, con un sumador en tiempo real (signo real del banco, magnitud
+absoluta en Money Manager, mismo motivo ya documentado para el ordenamiento por cercanía) y un
+aviso no bloqueante si las sumas no cuadran, con la opción explícita (nunca automática) de añadir
+una observación a los registros de MM implicados. Persistencia: `confirm_group()` en
+`backend/reconciliation_store.py` crea una entrada por línea de banco, todas compartiendo
+`group_id` y la lista completa de `mm_ids`; `entry_mm_ids()` centraliza la compatibilidad hacia
+atrás con enlaces 1:1 antiguos (`mm_id` suelto). Deshacer trata el grupo entero como una unidad
+(`get_last_confirmation_group()`/`undo_last_confirmation_group()`, sustituyen a las versiones
+singulares ya sin llamantes). Verificado en vivo contra el móvil real: sumador y aviso de mismatch
+correctos, resumen recalculado en caliente tras confirmar (sin volver a analizar el Excel), y
+"Deshacer" revirtió las dos líneas de banco del grupo como una sola unidad, dejando
+`data/reconciliations.json` bit a bit igual que antes de la prueba. Detalle completo en
+`CLAUDE.md` y `CHANGELOG.md`.
+
+### Propuesta #19: badges de resumen como filtros multiseleccionables
+
+- **Resuelto:** 2026-07-20, versión `0.15.0.54`.
+- **Anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió.
+
+Los badges de `#reconciliationSummaryBar` ("✅ cuadran", "❓ por revisar", "🏦 solo en el banco",
+"📱 solo en Money Manager") eran solo texto. Ahora son botones-filtro multiseleccionables (no
+excluyentes entre sí) que acotan `#proposalsList`/`#mmOrphansList`, combinables con el filtro de
+etiqueta y con el buscador Ctrl+F. De paso se corrigió un hueco real: `confirmMatch()` no
+recalculaba el resumen tras confirmar un candidato (sí lo hacían ya `confirmManualLink()`/
+`undoLastReconciliation()`), así que los badges quedaban desactualizados hasta el siguiente
+análisis completo. Verificado en vivo contra el móvil real con Playwright: filtro simple y filtro
+combinado (etiqueta + badge) reducen la lista a las tarjetas correctas, sin errores de consola.
+Detalle completo en `CLAUDE.md` y `CHANGELOG.md`.
+
 ### Bug #10: `clean_json()` no parseaba `getInitData` completo -- `categoryMapData` nunca se poblaba
 
 - **Resuelto:** 2026-07-20, versión `0.14.1.53`.
@@ -71,6 +106,27 @@ end-to-end contra el móvil real: `getInitData` parsea completo tras el fix, `ca
 puebla con 20 categorías, y una escritura real de prueba conserva `mcid`/`mcscid`/categoría
 intactos (antes del fix, la misma prueba producía `mbCategory: "None"`). Detalle completo en
 `CLAUDE.md` (sección "Lectura: `GET /moneyBook/getInitData`") y `CHANGELOG.md`.
+
+### Investigación: sospecha de regresión en enlace manual confirmado (no reproducida)
+
+- **Investigado:** 2026-07-20, a petición del usuario. Sin cambios de código -- no se encontró
+  ningún bug que arreglar.
+
+Caso reportado: el enlace manual confirmado en una sesión anterior entre "WWW.AMAZON*
+WM4XA8OY5" (banco, -14,70€) y "Amazon Chuches Reena" (Money Manager) parecía haber reaparecido
+como movimiento `new` del lado del banco al volver a analizar el extracto. Diagnóstico contra
+datos reales, sin asumir la causa: se localizó la entrada real en `data/reconciliations.json`
+(`mm_id: b69cc811-...-2026-06-28_3`), se reconstruyó a mano la clave (`make_key()`) con los
+mismos datos ya persistidos y coincidió byte a byte con la clave real almacenada; se revisó
+`logs/app.log` completo del día y TODOS los re-análisis de un solo fichero tras confirmar ese
+enlace muestran consistentemente `status: reconciled`, nunca `new`; se reprodujo la misma llamada
+a `/api/analyze-excel` en vivo contra el móvil real y el store real, con idéntico resultado
+(`reconciled`). El cambio de esta misma sesión para distinguir duplicados (badges "N/total", Bug
+#7) es puramente de renderizado en `static/script.js` y no toca `make_key()`/el cálculo de la
+clave en absoluto. Conclusión: no se pudo reproducir la regresión descrita con el código y los
+datos actuales -- si volviera a observarse, sería útil saber si ocurrió con `python app.py`
+(vía técnica) o con el `.exe`, y si la pestaña del navegador era una recién abierta o una que
+llevaba tiempo cargada (script.js cacheado).
 
 ### Propuesta #17: navegación entre coincidencias en el buscador Ctrl+F
 
