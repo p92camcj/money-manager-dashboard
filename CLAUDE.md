@@ -1097,6 +1097,21 @@ romper la otra.
   `requirements-desktop.txt` + `build_exe.spec`, y publica `dist/MoneyManagerDashboard.exe` como
   asset de un Release con ese mismo tag -- el asset se llama igual (`MoneyManagerDashboard.exe`)
   en cada Release para que `updater.py` no tenga que descubrir el nombre dinámicamente.
+  - **⚠️ Pushear varios tags casi a la vez (varias tareas cerradas con bump de versión en la misma
+    sesión) puede dejar "Latest" apuntando al tag EQUIVOCADO -- detectado y corregido 2026-07-20:**
+    `GET /repos/.../releases/latest` (lo que consulta `updater.py`) devuelve el Release marcado
+    como `latest` por GitHub, y esa marca la decide **el momento de publicación**, no el número de
+    versión más alto. Se pushearon `v0.14.1.53` y `v0.15.0.54` con pocos segundos de diferencia, y
+    el workflow de `v0.14.1.53` (versión más baja) terminó de publicar su Release unos segundos
+    DESPUÉS que el de `v0.15.0.54` -- GitHub marcó `v0.14.1.53` como "Latest", así que
+    `updater.py` habría servido a los usuarios del `.exe` una versión más antigua indefinidamente
+    (hasta el siguiente tag), sin ningún error visible. Verificado con
+    `gh api repos/.../releases/latest --jq '.tag_name'` antes y después del fix. **Fix**: tras
+    pushear el ÚLTIMO tag de una tanda de cierres de sesión, comprobar con ese mismo comando cuál
+    quedó como "Latest" y, si no es el de versión más alta, corregirlo con
+    `gh release edit <tag-correcto> --latest`. Si en el futuro se cierran varias tareas con bump
+    de versión en la misma sesión, este chequeo final es tan obligatorio como el propio push del
+    tag (ver "Versionado" más abajo).
 
 ## Versionado
 
