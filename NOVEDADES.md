@@ -4,6 +4,11 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.13.2.49 - 2026-07-20
+
+- Arreglado: en la versión de escritorio (.exe) ya se puede seleccionar y copiar texto de la app
+  (importes, conceptos, referencias) para pegarlo donde haga falta.
+
 ## 0.13.1.48 - 2026-07-20
 
 - En "Enlazar manualmente", ahora puedes pulsar ✏️ junto a un movimiento de Money Manager para

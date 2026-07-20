@@ -3,6 +3,32 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.13.2.49 - 2026-07-20
+
+Bug (Propuesta #16 del `BACKLOG.md`): en el `.exe` no se podía seleccionar ni copiar texto de la
+app (importes, conceptos, referencias) para pegarlo fuera.
+
+**Diagnóstico**: se revisó `static/style.css`/`static/script.js` en busca de `user-select: none`,
+`preventDefault()` en `mousedown`/`copy`, o cualquier otro bloqueo de selección propio -- no se
+encontró ninguno (confirmado también en vivo con Playwright: `getComputedStyle(...).userSelect`
+da `"auto"` y una selección de texto real en la tabla de Transacciones funciona sin problema en la
+vía navegador). La causa real es ajena al código de la app: `pywebview.create_window()` tiene
+`text_select=False` **de fábrica** (confirmado inspeccionando la firma real de la versión
+instalada, `pywebview==6.2.1`) -- pensado para que una ventana "de app" no se comporte como una
+página web cualquiera, justo lo contrario de lo que hace falta aquí. `desktop_app.py` nunca lo
+sobreescribía.
+
+**Fix**: `text_select=True` en la llamada a `webview.create_window()` de `desktop_app.py`. Sin
+relación con CSS/JS -- la vía navegador (`python app.py`) nunca estuvo afectada, esto es exclusivo
+de la ventana pywebview del `.exe`.
+
+**Verificación**: se compiló el `.exe` real con este cambio (`pyinstaller build_exe.spec`) para
+confirmar que `text_select=True` es un parámetro válido de la versión instalada de pywebview y que
+el build no rompe -- abrir la ventana de verdad y arrastrar el ratón para seleccionar texto
+requiere una sesión gráfica interactiva que no está disponible en el entorno donde se implementó
+este cambio; queda pendiente una comprobación visual la próxima vez que se abra el `.exe` en un
+escritorio real.
+
 ## 0.13.1.48 - 2026-07-20
 
 Propuesta #15 del `BACKLOG.md`: botón para abrir el modal de edición de un huérfano de Money

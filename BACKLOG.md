@@ -51,6 +51,21 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Propuesta #16: no se podía seleccionar ni copiar texto en el .exe
+
+- **Resuelto:** 2026-07-20, versión `0.13.2.49`.
+- **Anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió.
+
+Diagnóstico primero, sin asumir la causa: se revisó `static/style.css`/`static/script.js` en
+busca de `user-select: none` u otro bloqueo de selección/copiado -- no había ninguno (verificado
+también en vivo: la selección de texto funciona con normalidad en la vía navegador). La causa real
+era ajena al código de la app: `pywebview.create_window()` tiene `text_select=False` de fábrica
+(confirmado inspeccionando la firma de la versión instalada, `pywebview==6.2.1`), y
+`desktop_app.py` nunca lo sobreescribía. Fix: `text_select=True` en esa llamada. Verificado
+compilando el `.exe` real; queda pendiente la comprobación visual (arrastrar el ratón en una
+ventana real) la próxima vez que se abra en un escritorio con sesión gráfica. Detalle completo en
+`CHANGELOG.md`.
+
 ### Propuesta #15: editar un huérfano de MM desde el modo de enlace manual, antes de confirmar
 
 - **Resuelto:** 2026-07-20, versión `0.13.1.48`.

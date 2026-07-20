@@ -62,6 +62,14 @@ def main():
         width=1280,
         height=860,
         min_size=(900, 600),
+        # pywebview desactiva la selección de texto por defecto (text_select=False de fábrica,
+        # pensado para que una ventana "de app" no se comporte como una página web cualquiera) --
+        # aquí es justo lo contrario de lo que hace falta: el usuario necesita poder seleccionar y
+        # copiar importes, conceptos y referencias para pegarlos fuera de la app (Propuesta #16,
+        # BACKLOG.md). Sin relación con CSS/JS -- static/style.css y static/script.js no tienen
+        # ningún `user-select`/bloqueo de copiado propio, así que la vía navegador (`python app.py`)
+        # nunca estuvo afectada; esto es exclusivo de la ventana pywebview del .exe.
+        text_select=True,
     )
     webview.start()
 
