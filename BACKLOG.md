@@ -51,6 +51,19 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Propuesta #18: icono propio del .exe (temática de dinero/finanzas)
+
+- **Resuelto:** 2026-07-20, versión `0.13.3.50`.
+- **Anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió.
+
+`build_exe.spec` no pasaba ningún `icon=` a `EXE()`, así que PyInstaller usaba su icono por
+defecto (un disquete de 3.5"). `generate_icon.py` (nuevo, raíz del repo) genera
+`static/app_icon.ico` con Pillow: una moneda dorada con el símbolo € sobre un gráfico de barras
+ascendente, con el mismo degradado de colores ya usado en la propia UI -- icono propio, generado
+desde cero, sin dudas de licencia de terceros. Reproducible con `python generate_icon.py`.
+Verificado compilando el `.exe` real y extrayendo el icono ya incrustado en el binario -- confirma
+que es la moneda nueva, legible incluso a 16px. Detalle completo en `CHANGELOG.md`.
+
 ### Propuesta #16: no se podía seleccionar ni copiar texto en el .exe
 
 - **Resuelto:** 2026-07-20, versión `0.13.2.49`.

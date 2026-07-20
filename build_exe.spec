@@ -22,6 +22,16 @@ datas = [
     ('NOVEDADES.md', '.'),
 ]
 
+# Icono propio del .exe (Propuesta #18, BACKLOG.md) -- antes no se pasaba ningún `icon=` a EXE()
+# aquí abajo, así que PyInstaller usaba su icono por defecto (un disquete de 3.5", sin relación
+# con lo que hace la app). static/app_icon.ico se genera con Pillow (ver generate_icon.py,
+# reproducible con `python generate_icon.py`) a partir del propio degradado de colores de la UI
+# (--primary/--secondary en style.css) -- una moneda de € sobre un gráfico de barras ascendente,
+# para que se lea como "finanzas/conciliación bancaria" incluso en el tamaño pequeño del icono de
+# la barra de tareas. No es un icono de terceros -- se generó desde cero para este proyecto, sin
+# dudas de licencia.
+ICON_PATH = 'static/app_icon.ico'
+
 a = Analysis(
     ['desktop_app.py'],
     pathex=[],
@@ -55,4 +65,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=ICON_PATH,
 )

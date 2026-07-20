@@ -3,6 +3,31 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.13.3.50 - 2026-07-20
+
+Propuesta #18 del `BACKLOG.md`: icono propio para el `.exe`, con temática de dinero/finanzas en
+vez del icono por defecto de PyInstaller (un disquete de 3.5", sin relación con lo que hace la
+app).
+
+- `generate_icon.py` (nuevo, raíz del repo): genera `static/app_icon.ico` con Pillow -- fondo
+  cuadrado redondeado con el mismo degradado ya usado en la propia UI (`--primary #4169e1` ->
+  `--secondary #6c5ce7`, `style.css`), una moneda dorada con el símbolo € dibujado a mano (arco +
+  dos barras, para no depender de que una fuente concreta tenga el glifo "€" bien centrado en
+  cada tamaño) y un gráfico de barras ascendente detrás, aludiendo a la conciliación
+  bancaria/finanzas personales de la app. Icono propio, generado desde cero para este proyecto --
+  no hay dudas de licencia de terceros. Reproducible con `python generate_icon.py` (requiere
+  `pip install Pillow`, no añadido a `requirements.txt`/`requirements-desktop.txt` porque solo
+  hace falta para regenerar el icono, nunca en tiempo de ejecución ni durante el build de
+  PyInstaller).
+- `build_exe.spec`: nuevo `icon=ICON_PATH` en la llamada a `EXE()` -- antes no se pasaba ningún
+  `icon=` en absoluto, así que PyInstaller usaba su icono por defecto.
+
+**Verificado en vivo, no solo por trazado de código**: se compiló el `.exe` real
+(`pyinstaller build_exe.spec`) y se extrajo el icono ya incrustado en el binario compilado
+(`System.Drawing.Icon.ExtractAssociatedIcon` sobre `dist/MoneyManagerDashboard.exe`) -- confirmado
+visualmente que es la moneda dorada nueva, no el disquete por defecto, tanto a 256px como
+reescalado a 32px/16px (tamaño de la barra de tareas), donde el símbolo € sigue siendo legible.
+
 ## 0.13.2.49 - 2026-07-20
 
 Bug (Propuesta #16 del `BACKLOG.md`): en el `.exe` no se podía seleccionar ni copiar texto de la
