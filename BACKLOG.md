@@ -51,6 +51,27 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Bug #10: `clean_json()` no parseaba `getInitData` completo -- `categoryMapData` nunca se poblaba
+
+- **Resuelto:** 2026-07-20, versión `0.14.1.53`.
+- **Detectado:** 2026-07-20, durante la verificación en vivo de la Propuesta #20 (no relacionado
+  con esa tarea en sí -- un efecto colateral descubierto al probar la escritura de observaciones).
+
+El campo `inOutText` de `getInitData` viene como `[['Gasto'],['Ingreso']]` -- comillas simples
+dentro de un array, no precedidas de `:` -- y la regla 2 de `clean_json()` (que solo convierte
+`'...'` cuando va justo después de `:`) las dejaba intactas, rompiendo el `json.loads()` de TODO
+el documento. `/api/proxy/moneyBook/getInitData` caía al último recurso (devolver el texto crudo
+sin limpiar), y `fetchCategoryMap()` fallaba en silencio (`resp.json()` lanza `SyntaxError`,
+capturado por su propio `catch`) -- `categoryMapData` se quedaba vacío en TODOS los arranques para
+esta cuenta real. Consecuencia real: el fix del Bug #2 (mandar `mcid`/`mcscid`) llevaba tiempo sin
+poder aplicarse nunca en la práctica -- cualquier `create`/`update` guardaba la categoría como
+`"None"`, el mismo síntoma que el Bug #2 decía haber resuelto. Fix: regla 2b en `clean_json()`,
+mismo criterio que la regla 2 pero para un valor precedido de `[`/`,` en vez de `:`. Verificado
+end-to-end contra el móvil real: `getInitData` parsea completo tras el fix, `categoryMapData` se
+puebla con 20 categorías, y una escritura real de prueba conserva `mcid`/`mcscid`/categoría
+intactos (antes del fix, la misma prueba producía `mbCategory: "None"`). Detalle completo en
+`CLAUDE.md` (sección "Lectura: `GET /moneyBook/getInitData`") y `CHANGELOG.md`.
+
 ### Propuesta #17: navegación entre coincidencias en el buscador Ctrl+F
 
 - **Resuelto:** 2026-07-20, versión `0.14.0.52`.

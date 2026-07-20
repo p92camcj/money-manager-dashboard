@@ -172,6 +172,13 @@ def clean_json(text):
         text = re.sub(r'(\w+)\s*:', r'"\1":', text)
         # 2. Convertir comillas simples a dobles en valores : '...'
         text = re.sub(r":\s*'([^']*)'", r': "\1"', text)
+        # 2b. Igual que 2, pero para valores DENTRO de un array literal (p.ej.
+        # `getInitData` real devuelve "inOutText":[['Gasto'],['Ingreso']] -- sin ':' inmediatamente
+        # antes, la regla 2 no los tocaba y json.loads() fallaba para TODO el documento, dejando
+        # `fetchCategoryMap()` silenciosamente sin datos (por tanto sin mcid/mcscid -- Bug #2 volvía
+        # a manifestarse aunque su fix seguía en su sitio). Cubre un valor de cadena precedido
+        # directamente por '[' o ',' (apertura de array o siguiente elemento), no solo por ':'.
+        text = re.sub(r"([\[,]\s*)'([^']*)'", r'\1"\2"', text)
         # 3. Eliminar comas finales
         text = re.sub(r',\s*([\]}])', r'\1', text)
         return text

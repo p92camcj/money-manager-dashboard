@@ -4,6 +4,11 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.14.1.53 - 2026-07-20
+
+- Corregido un fallo que impedía que la app reconociera correctamente las categorías al guardar
+  algunos cambios en según qué cuentas -- podía guardar la categoría como vacía sin avisar.
+
 ## 0.14.0.52 - 2026-07-20
 
 - El buscador Ctrl+F ahora deja moverte entre los resultados: botones ◀ ▶, o Enter/Shift+Enter

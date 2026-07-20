@@ -3,6 +3,27 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.14.1.53 - 2026-07-20
+
+Bug #10 del `BACKLOG.md`: `clean_json()` (`app.py`) no cubría un valor entre comillas simples
+dentro de un array sin `:` inmediatamente antes -- `getInitData` real devuelve
+`"inOutText":[['Gasto'],['Ingreso']]`, y eso rompía el `json.loads()` de todo el documento.
+`/api/proxy/moneyBook/getInitData` caía entonces al último recurso del proxy (texto crudo sin
+limpiar), y `fetchCategoryMap()` fallaba en silencio -- `categoryMapData` se quedaba vacío en
+todos los arranques para esta cuenta real, y por tanto el fix del Bug #2 (mandar `mcid`/`mcscid`
+junto a `mbCategory`/`subCategory`) llevaba tiempo sin poder aplicarse nunca en la práctica.
+
+- Nueva regla 2b en `clean_json()`: mismo criterio que la regla 2 (comillas simples -> dobles),
+  pero para un valor precedido de `[` o `,` (apertura de array o siguiente elemento), no solo de
+  `:`.
+
+Descubierto y verificado end-to-end contra el móvil real durante la verificación de la Propuesta
+#20 (no relacionado con esa tarea en sí): antes del fix, `getInitData` fallaba con
+`Expecting value` en el primer `['Gasto']`; tras el fix parsea completo (`category_1` con 20
+categorías), `categoryMapData.expense` se puebla en el navegador, y una escritura de prueba sobre
+una transacción real conserva `mcid`/`mcscid`/categoría intactos (antes del fix, la misma prueba
+daba `mbCategory: "None"`).
+
 ## 0.14.0.52 - 2026-07-20
 
 Propuesta #17 del `BACKLOG.md`: navegación entre coincidencias en el buscador "Ctrl+F"

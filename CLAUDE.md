@@ -213,6 +213,42 @@ Devuelven JSON (a veces no estándar: claves sin comillas, comillas simples — 
 `clean_json()` en `app.py`). `getAssetData` da el árbol de cuentas/activos (grupo > cuentas, cada
 una con `assetId`, `assetName`, `assetMoney`).
 
+### Lectura: `GET /moneyBook/getInitData`
+
+JSON no estándar (mismo motivo que arriba, `clean_json()`). Da, entre otros campos, `category_0`
+(categorías de Ingreso) y `category_1` (categorías de Gasto), cada una con `mcid`/`mcname` y
+`mcsc[]` (subcategorías, `mcscid`/`mcscname`) — la fuente de `categoryMapData` en
+`static/script.js` (`fetchCategoryMap()`), imprescindible para que `create`/`update` guarden
+`mcid`/`mcscid` (ver Bug #2 más abajo).
+
+**⚠️ `clean_json()` no cubría un caso real de este endpoint — descubierto 2026-07-20, durante la
+verificación en vivo de la Propuesta #20 (enlace N:M), no relacionado con esa tarea en sí:** el
+campo `inOutText` de `getInitData` viene como `[['Gasto'],['Ingreso']]` — cadenas de comillas
+simples DENTRO de un array, no precedidas de `:` — y la regla 2 de `clean_json()` (que solo
+convierte `'...'` cuando va justo después de `:`) las dejaba intactas, rompiendo el `json.loads()`
+de **todo el documento** de `getInitData`, no solo de ese campo. `/api/proxy/moneyBook/getInitData`
+caía entonces al último recurso de `proxy()` (devolver el texto crudo, sin limpiar, con
+`Content-Type: application/json`), y `fetchCategoryMap()` en el frontend fallaba en silencio
+(`resp.json()` lanza `SyntaxError`, capturado por su propio `catch`) — `categoryMapData` se
+quedaba con el valor inicial vacío `{income:{}, expense:{}}` **en todos los arranques**, para
+cualquier usuario cuyo `getInitData` real tenga esta forma. Consecuencia real, no solo teórica:
+el fix del Bug #2 (mandar `mcid`/`mcscid` junto a `mbCategory`/`subCategory`) llevaba tiempo sin
+poder aplicarse nunca en la práctica para esta cuenta real — cualquier `create`/`update` guardaba
+silenciosamente la categoría como `"None"` (`mcid: "-2"`), exactamente el síntoma que el Bug #2
+decía haber resuelto. Verificado end-to-end contra el móvil real: se capturó la respuesta cruda de
+`getInitData` (23 KB), se confirmó que `json.loads(clean_json(texto))` fallaba con
+`Expecting value` justo en el primer `['Gasto']` de `inOutText`, y que **antes** del fix una
+transacción de prueba real guardada por `appendNoteToMmRecords()` (ver Propuesta #20) efectivamente
+perdía la categoría (`mbCategory: "None"`, sin `mcid`) porque `categoryMapData.expense` estaba
+vacío en el navegador. **Fix**: nueva regla 2b en `clean_json()` — mismo criterio que la regla 2,
+pero para un valor entrecomillado con comillas simples precedido de `[` o `,` (apertura de array o
+elemento siguiente), no solo de `:`. Reverificado tras el fix: `getInitData` parsea completo (8
+claves, `category_1` con 20 categorías, `inOutText: [['Gasto'], ['Ingreso']]` ya con comillas
+dobles), `categoryMapData.expense` se puebla con 20 entradas en el navegador, y una prueba de
+escritura real sobre una transacción real existente (`Mercadona`, categoría `🍴 ALIMENTACIÓN` ·
+`🛒 Supermercado`) conserva `mcid`/`mcscid`/categoría intactos tras pasar por
+`appendNoteToMmRecords()` — restaurada a su contenido original exacto tras la prueba.
+
 ### Escritura: `POST /moneyBook/create`, `POST /moneyBook/update`, `POST /moneyBook/delete`
 
 **`create`/`update` aceptan NOMBRES para `payType`, `mbCategory` y `subCategory`** — hay que mandar
