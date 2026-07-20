@@ -3,6 +3,39 @@
 Formato de versión: `X.Y.Z.W` (ver reglas de incremento en `CLAUDE.md`). Resumen en lenguaje
 sencillo para usuarios finales en `NOVEDADES.md` (convención desde la versión `0.8.4.32`).
 
+## 0.13.0.47 - 2026-07-20
+
+Propuesta #14 del `BACKLOG.md`: deshacer la última conciliación confirmada (por "Confirmar Este"
+o por el modo de enlace manual, Propuesta #13). Antes no existía ningún mecanismo -- la única
+forma de revertir un enlace era editar `data/reconciliations.json` a mano, como se confirmó
+durante la propia verificación en vivo de la Propuesta #13 en la sesión anterior.
+
+- `backend/reconciliation_store.py`: `confirm()` guarda ahora también `date`/`amount`/
+  `description` en claro (además de `mm_id`/`confirmed_at`/`status`) -- la clave del almacén es un
+  hash irreversible, así que sin esto no habría forma de mostrarle al usuario QUÉ se va a deshacer
+  antes de confirmar. No es un dato nuevo (ya vive en el Excel del banco y en Money Manager) y
+  `data/` ya está fuera de git. `get_last_confirmation()` (la entrada más reciente por
+  `confirmed_at`, no por orden de inserción del dict) y `undo_last_confirmation()` (la elimina y
+  la devuelve) -- deliberadamente solo la ÚLTIMA, sin historial de varios pasos.
+- `GET /api/reconciliations/last` / `POST /api/reconciliations/undo` en `app.py`, sin tocar Money
+  Manager en ningún caso (el vínculo era solo local).
+- Botón "↩️ Deshacer última conciliación" en Conciliación (`undoLastReconciliation()` en
+  `static/script.js`): consulta siempre el backend (nunca se fía solo del estado en memoria) para
+  mostrarle al usuario fecha/importe/descripción de lo que se va a deshacer ANTES de pedir
+  confirmación (`confirm()` del navegador). Si la conciliación se confirmó en esta misma sesión
+  (`lastConfirmedAction`, capturado en `confirmMatch()`/`confirmManualLink()` justo antes de
+  sobreescribir el estado), la reversión es instantánea en pantalla (la propuesta vuelve a su
+  estado previo, el huérfano se reinserta en `lastOrphans` si lo había) sin tener que re-analizar
+  el Excel; si no (sesión anterior, otra pestaña, entrada sin date/amount/description por ser
+  previa a este cambio), se degrada avisando que hay que volver a analizar el fichero para verlo
+  reflejado.
+
+**Verificado en vivo contra el móvil real**: confirmado un enlace manual real, deshecho al
+instante (diálogo de confirmación mostrando fecha/importe/descripción reales, no un mensaje
+genérico), y comprobado que el estado local revierte exactamente (`new`+1, `reconciled`-1,
+`orphans`+1) sin volver a analizar el Excel. `data/reconciliations.json` quedó con el mismo número
+de entradas que antes de la prueba, confirmando que el deshacer no dejó rastro.
+
 ## 0.12.2.46 - 2026-07-20
 
 Bug real en el modo de enlace manual (Propuesta #13), detectado por el usuario probándolo en

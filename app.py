@@ -45,7 +45,10 @@ _file_handler.setFormatter(_log_formatter)
 logger.addHandler(_file_handler)
 
 from backend.reconciliation import match_bank_transactions, build_mm_dataframe, find_mm_orphans
-from backend.reconciliation_store import make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation
+from backend.reconciliation_store import (
+    make_key, get_confirmation, load_store as load_reconciliation_store, confirm as confirm_reconciliation,
+    get_last_confirmation, undo_last_confirmation,
+)
 from backend.bank_statement_parser import parse_bank_statement, parse_bank_date, BankStatementFormatError
 from backend.budget_engine import BudgetEngine
 
@@ -461,6 +464,29 @@ def confirm_reconciliation_endpoint():
         return jsonify({"status": "success", "key": key})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/reconciliations/last', methods=['GET'])
+def get_last_reconciliation_endpoint():
+    """Propuesta #14 (BACKLOG.md), deshacer: info de la conciliación confirmada más reciente
+    (por 'confirmar match'/'confirmar candidato' o por el modo de enlace manual -- ambos escriben
+    aquí igual, ver /api/reconciliations/confirm), para que el frontend pueda mostrarle al usuario
+    QUÉ se va a deshacer antes de pedir confirmación. `{last: null}` si el almacén está vacío."""
+    key, entry = get_last_confirmation()
+    if key is None:
+        return jsonify({"last": None})
+    return jsonify({"last": {**entry, "key": key}})
+
+@app.route('/api/reconciliations/undo', methods=['POST'])
+def undo_last_reconciliation_endpoint():
+    """Deshace la última conciliación confirmada (la que devolvería GET /api/reconciliations/last
+    en ese momento) -- solo la última, no un historial de deshacer con varios pasos. NUNCA toca
+    Money Manager: el vínculo era solo local, así que deshacerlo tampoco escribe nada allí."""
+    removed = undo_last_confirmation()
+    if removed is None:
+        return jsonify({"error": "No hay ninguna conciliación que deshacer."}), 404
+    logger.info(f"[reconciliations] Deshecho {removed.get('date')} | {removed.get('amount')} | "
+                f"{str(removed.get('description'))[:40]!r} -> mm_id={removed.get('mm_id')}")
+    return jsonify({"status": "success", "removed": removed})
 
 @app.route('/api/budget-hierarchy', methods=['GET'])
 def get_budget_hierarchy():

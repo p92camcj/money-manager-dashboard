@@ -13,6 +13,12 @@ let currentLabelFilter = 'all'; // etiqueta de origen seleccionada en el filtro 
 let manualLinkMode = false; // modo de enlace manual banco <-> Money Manager activo en Conciliación
 let manualLinkSelectedBankSourceId = null; // source_id del proposal 'new' elegido en el modo manual
 let manualLinkSelectedOrphanId = null; // id de mm_orphans elegido en el modo manual
+// Última conciliación confirmada EN ESTA SESIÓN (por confirmMatch() o confirmManualLink()), para
+// que undoLastReconciliation() (Propuesta #14) pueda revertir el estado local al instante sin
+// tener que volver a analizar el Excel. Si el usuario deshace algo confirmado en una sesión
+// anterior (o tras recargar la página), esto es null y undoLastReconciliation() se degrada a
+// avisar que hay que volver a analizar el fichero para verlo reflejado.
+let lastConfirmedAction = null;
 
 // Mapa nombre de categoría/subcategoría -> mcid/mcscid reales de Money Manager (Bug #2,
 // BACKLOG.md: confirmado contra el móvil real que create/update IGNORAN mbCategory/subCategory
@@ -1415,6 +1421,14 @@ async function confirmMatch(sourceId, candId) {
         // ya funcionaba correctamente; el estado desincronizado vivía solo aquí). Replicamos el
         // mismo resultado que calcularía analyze_excel() al re-analizar (ver app.py) para que el
         // estado local quede coherente con el del backend en cualquier re-render.
+        // Captura ANTES de sobreescribir -- undoLastReconciliation() (Propuesta #14) la usa para
+        // restaurar la tarjeta al instante si el usuario deshace esto en la misma sesión.
+        lastConfirmedAction = {
+            key: data.key,
+            proposalSourceId: sourceId,
+            previousState: { status: proposal.status, confidence: proposal.confidence, suggested_mm_ref: proposal.suggested_mm_ref, candidates: proposal.candidates },
+            orphanRemoved: null,
+        };
         proposal.status = 'reconciled';
         proposal.confidence = 100;
         proposal.suggested_mm_ref = candId;
@@ -1556,6 +1570,15 @@ async function confirmManualLink() {
         // El huérfano se quita de lastOrphans aquí mismo -- el backend solo lo excluiría en el
         // PRÓXIMO análisis (excluded_mm_ids se recalcula a partir de data/reconciliations.json),
         // no de forma retroactiva sobre esta respuesta ya recibida.
+        // Captura ANTES de mutar nada -- undoLastReconciliation() (Propuesta #14) necesita tanto
+        // el estado previo de la propuesta como el objeto huérfano completo (se descarta de
+        // lastOrphans más abajo, así que sin esta copia no habría forma de reinsertarlo tal cual).
+        lastConfirmedAction = {
+            key: data.key,
+            proposalSourceId: manualLinkSelectedBankSourceId,
+            previousState: { status: bankProposal.status, confidence: bankProposal.confidence, suggested_mm_ref: bankProposal.suggested_mm_ref, candidates: bankProposal.candidates },
+            orphanRemoved: { ...orphan },
+        };
         bankProposal.status = 'reconciled';
         bankProposal.confidence = 100;
         bankProposal.suggested_mm_ref = orphan.id;
@@ -1572,6 +1595,75 @@ async function confirmManualLink() {
         alert("Enlace manual confirmado -- vinculado localmente, no se ha escrito nada en Money Manager.");
     } catch (e) {
         alert("Error crítico confirmando el enlace: " + e.message);
+    }
+}
+
+// Propuesta #14 (BACKLOG.md): deshace la última conciliación confirmada, sea por "Confirmar Este"
+// (confirmMatch()) o por el modo de enlace manual (confirmManualLink()) -- ambas escriben en el
+// mismo almacén (`data/reconciliations.json`), así que un único mecanismo de deshacer sirve para
+// las dos. Pide siempre confirmación mostrando fecha/importe/descripción de lo que se va a
+// deshacer (vía GET /api/reconciliations/last, la fuente de verdad del backend -- no se fía de
+// `lastConfirmedAction`, que solo existe si la confirmación se hizo EN ESTA SESIÓN) antes de
+// llamar a POST /api/reconciliations/undo. NUNCA toca Money Manager: el vínculo era solo local.
+async function undoLastReconciliation() {
+    let last;
+    try {
+        const resp = await fetch('/api/reconciliations/last');
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            alert("Error consultando la última conciliación: " + (data.error || resp.status));
+            return;
+        }
+        last = data.last;
+    } catch (e) {
+        alert("Error crítico consultando la última conciliación: " + e.message);
+        return;
+    }
+
+    if (!last) {
+        alert("No hay ninguna conciliación confirmada que deshacer.");
+        return;
+    }
+
+    // Entradas guardadas antes de que confirm() empezara a persistir date/amount/description
+    // (ver reconciliation_store.py) no las tienen -- degradar con el mm_id en vez de fallar.
+    const desc = last.date && last.amount !== undefined && last.description
+        ? `${last.date} · ${formatCurrency(last.amount)} · ${last.description}`
+        : `registro de Money Manager con id ${last.mm_id}`;
+    if (!confirm(`¿Deshacer la conciliación de:\n\n${desc}\n\nVolverá a aparecer como pendiente (el movimiento del banco como "Nuevo"/con dudas; si estaba enlazado a un huérfano de Money Manager, ese huérfano reaparecerá al volver a analizar el fichero).`)) {
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/reconciliations/undo', { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            alert("Error al deshacer: " + (data.error || resp.status));
+            return;
+        }
+
+        // Reversión instantánea y precisa solo si la propia acción se confirmó en esta sesión
+        // (lastConfirmedAction) Y coincide con lo que el backend acaba de deshacer (mismo `key` --
+        // podría no coincidir si el usuario deshizo algo confirmado en otra sesión/pestaña). Si no
+        // coincide, degradar a pedir un re-análisis en vez de arriesgarse a reconstruir un estado
+        // que no se conoce con certeza (candidatos originales, etc.).
+        if (lastConfirmedAction && lastConfirmedAction.key === data.removed.key) {
+            const proposal = lastProposals.find(p => p.source_id === lastConfirmedAction.proposalSourceId);
+            if (proposal) Object.assign(proposal, lastConfirmedAction.previousState);
+            if (lastConfirmedAction.orphanRemoved) {
+                lastOrphans = [...(lastOrphans || []), lastConfirmedAction.orphanRemoved];
+            }
+            lastConfirmedAction = null;
+            renderProposalsList();
+            renderMmOrphansList();
+            renderReconciliationSummary();
+            renderManualLinkSection();
+            alert("Conciliación deshecha.");
+        } else {
+            alert("Conciliación deshecha. Vuelve a analizar el fichero para verlo reflejado como pendiente.");
+        }
+    } catch (e) {
+        alert("Error crítico deshaciendo la conciliación: " + e.message);
     }
 }
 

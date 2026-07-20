@@ -51,6 +51,29 @@ un coste/proceso externo al código -- queda anotado para valorar si el proyecto
 
 ## Resueltos
 
+### Propuesta #14: deshacer la última conciliación confirmada
+
+- **Resuelto:** 2026-07-20, versión `0.13.0.47`.
+- **Anotado:** 2026-07-20, a petición del usuario en la misma sesión en que se resolvió -- surgió
+  al confirmar, durante la verificación en vivo de la Propuesta #13 en la sesión anterior, que dos
+  enlaces reales quedaron grabados en `data/reconciliations.json` sin forma de revertirlos salvo
+  editando el JSON a mano.
+
+`backend/reconciliation_store.py::confirm()` guarda ahora también `date`/`amount`/`description` en
+claro (antes solo `mm_id`/`confirmed_at`/`status` -- la clave es un hash irreversible, así que sin
+esto no se le podría mostrar al usuario QUÉ se va a deshacer). `get_last_confirmation()`/
+`undo_last_confirmation()` nuevas, y `GET /api/reconciliations/last` / `POST
+/api/reconciliations/undo` en `app.py` -- nunca tocan Money Manager. Botón "↩️ Deshacer última
+conciliación" en Conciliación: siempre pide confirmación mostrando fecha/importe/descripción
+reales antes de deshacer, y revierte al instante en pantalla si la conciliación se confirmó en la
+misma sesión (sin re-analizar el Excel); si no, avisa que hace falta un re-análisis. Deliberadamente
+solo la ÚLTIMA conciliación, sin historial de varios pasos -- no se vio necesidad de más por ahora.
+
+**Verificación en vivo contra el móvil real**: confirmado un enlace manual real, deshecho al
+instante con el diálogo mostrando datos reales (no un mensaje genérico), estado local revertido
+exactamente (`new`+1/`reconciled`-1/`orphans`+1) sin re-analizar, y `data/reconciliations.json`
+con el mismo número de entradas que antes de la prueba. Detalle completo en `CHANGELOG.md`.
+
 ### Bug #6: en el modo de enlace manual, un huérfano de MM "desaparecía" al elegir un movimiento del banco
 
 - **Resuelto:** 2026-07-20, versión `0.12.2.46`.

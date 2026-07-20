@@ -4,6 +4,11 @@ Resumen en lenguaje sencillo de lo que ha cambiado en cada versión, pensado par
 persona que use la aplicación (no solo quien programa). La versión técnica completa, con detalle
 de qué archivo cambió y por qué, está en `CHANGELOG.md`.
 
+## 0.13.0.47 - 2026-07-20
+
+- Nuevo en Conciliación: botón "Deshacer última conciliación". Antes de deshacer nada te enseña
+  qué se va a deshacer (fecha, importe, concepto) y te pide confirmación.
+
 ## 0.12.2.46 - 2026-07-20
 
 - Arreglado: en "Enlazar manualmente", al elegir un movimiento del banco a veces algún movimiento

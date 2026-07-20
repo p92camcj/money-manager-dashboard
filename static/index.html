@@ -121,6 +121,7 @@
                     <input type="file" id="excelInput" accept=".xls,.xlsx,.csv" multiple style="display:none" onchange="handleFilesSelected()">
                     <button class="btn-secondary" onclick="document.getElementById('excelInput').click()">Subir Excel/CSV</button>
                     <button class="btn-secondary" id="manualLinkToggleBtn" onclick="toggleManualLinkMode()" title="Para casos que el matching automático no cruza -- elige a mano una línea del banco y un movimiento de Money Manager y enlázalos.">🔗 Enlazar manualmente</button>
+                    <button class="btn-secondary" id="undoLastReconciliationBtn" onclick="undoLastReconciliation()" title="Deshace la última conciliación confirmada (match confirmado o enlace manual), sea de esta sesión o de una anterior.">↩️ Deshacer última conciliación</button>
                 </div>
                 <div id="fileLabelsList" class="card glass" style="display:none; margin-bottom:20px;">
                     <!-- Ficheros seleccionados pendientes de etiquetar/confirmar -->
@@ -264,6 +265,6 @@
     </div>
 
     <script src="js/analytics.js?v=8"></script>
-    <script src="script.js?v=25"></script>
+    <script src="script.js?v=26"></script>
 </body>
 </html>
